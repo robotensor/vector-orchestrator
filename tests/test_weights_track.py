@@ -18,7 +18,7 @@ from vector_orchestrator.ids import SubmissionRef
 from vector_orchestrator.spec import load_spec_file, validate_spec
 
 ROOT = Path(__file__).resolve().parents[1]
-VECTOR_SPEC = ROOT / "specs" / "vector_l1.json"
+VECTOR_SPEC = ROOT / "specs" / "vector_level1.json"
 SHA = "a" * 40
 HASH = "0x" + "b" * 64
 
@@ -37,14 +37,14 @@ def vector_spec():
 
 
 def test_the_vector_contract_is_a_valid_weights_track(vector_spec):
-    assert vector_spec.tracks == ("vector_l1",)
+    assert vector_spec.tracks == ("vector_level1",)
     assert vector_spec.submission_kind == "weights"
     assert vector_spec.model["weights_file"] == "model.safetensors"
-    assert vector_spec.protocol("vector_l1") == "different_initial_state"
-    assert vector_spec.paired_alpha("vector_l1") == 0.05
+    assert vector_spec.protocol("vector_level1") == "different_initial_state"
+    assert vector_spec.paired_alpha("vector_level1") == 0.05
     # 10 units per task on the 16-task suite, the launch size.
-    assert vector_spec.units_per_side("vector_l1") == 160
-    assert vector_spec.baseline("vector_l1")["size"] == "smoke"
+    assert vector_spec.units_per_side("vector_level1") == 160
+    assert vector_spec.baseline("vector_level1")["size"] == "smoke"
 
 
 def test_a_code_spec_still_needs_its_sandbox_and_has_no_model(spec):
@@ -68,7 +68,10 @@ def test_a_code_spec_still_needs_its_sandbox_and_has_no_model(spec):
         (lambda d: d["submission"].update(kind="docker"), "submission.kind"),
         (lambda d: d["duel"]["crown"].update(alpha=1.5), "duel.crown.alpha"),
         (lambda d: d["duel"]["crown"].update(paired_test="t"), "duel.crown.paired_test"),
-        (lambda d: d["baselines"]["vector_l1"].update(size="huge"), "baselines.vector_l1.size"),
+        (
+            lambda d: d["baselines"]["vector_level1"].update(size="huge"),
+            "baselines.vector_level1.size",
+        ),
     ],
 )
 def test_the_weights_contract_refuses_what_it_cannot_honour(vector_doc, edit, problem):
@@ -86,7 +89,7 @@ def test_a_weights_spec_needs_no_sandbox(vector_doc):
 
 def request(**seed) -> DuelRequest:
     return DuelRequest(
-        "vector_l1",
+        "vector_level1",
         SubmissionRef.make("m/challenger", SHA),
         SubmissionRef.make("m/king", "c" * 40),
         "smoke",
@@ -226,7 +229,9 @@ def test_a_repository_without_its_weights_file_is_refused(tmp_path, vector_spec)
 
 def test_only_the_weights_file_is_fetched_and_the_manifest_is_the_validators(tmp_path, vector_spec):
     downloads: list[str] = []
-    rt = runtime(tmp_path, vector_spec, {"model.safetensors": 7, "README.md": 5}, downloads=downloads)
+    rt = runtime(
+        tmp_path, vector_spec, {"model.safetensors": 7, "README.md": 5}, downloads=downloads
+    )
     fetched = rt.fetch(SubmissionRef.make("m/r", SHA), workdir=tmp_path / "w")
     assert downloads == ["m/r"] and sorted(p.name for p in fetched.root.iterdir()) == [
         "model.safetensors"

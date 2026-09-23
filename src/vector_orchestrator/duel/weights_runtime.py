@@ -50,7 +50,7 @@ from .runtime import (
 )
 
 #: The manifest the runtime writes for the validator's policy class; never a submission's file.
-MANIFEST_FILE = "icil.yaml"
+MANIFEST_FILE = "policy.yaml"
 #: Environment variables a served policy may use beyond the subprocess allow-list. Vector needs none
 #: of them to serve (its CLIP backbone is built from the template and filled by the submission's
 #: weights, with no download), but a cache location or an offline switch set for the host is kept,
@@ -218,7 +218,7 @@ class WeightsPolicyRuntime(SubprocessPolicyRuntime):
     # -- helpers ----------------------------------------------------------------------------
 
     def _write_manifest(self, workdir: Path, weights: Path) -> Path:
-        """The validator's own `icil.yaml`, beside nothing of the submission's: its policy class
+        """The validator's own `policy.yaml`, beside nothing of the submission's: its policy class
         and the weights file's absolute path (the server changes directory before building)."""
         # Absolute: the server starts in a directory of its own, where a relative path means nothing.
         directory = (workdir / "manifest").resolve()
