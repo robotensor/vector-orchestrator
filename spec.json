@@ -174,7 +174,7 @@
   "policy_protocol": 1,
   "max_repo_bytes": 8589934592,
   "base_image": {
-   "name": "vector-policy-base",
+   "name": "vector-protocol-base",
    "digest": null,
    "_comment": "Placeholder until docker/policy-base is built and referenced by digest. A submission's image is built FROM exactly this digest, and the event records it."
   },

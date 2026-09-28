@@ -198,7 +198,7 @@ def mirror_log(
         while not stop.wait(interval_s):
             seen = _copy_tail(source, target, limit, seen)
 
-    thread = threading.Thread(target=follow, name="vector-policy-log", daemon=True)
+    thread = threading.Thread(target=follow, name="vector-protocol-log", daemon=True)
     thread.start()
     try:
         yield target

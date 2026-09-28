@@ -92,7 +92,7 @@ class RemotePolicy:
     def hello(self) -> dict[str, Any]:
         """Greet the server, which builds the policy now; its `protocol`, `action_type`, `policy`."""
         try:
-            fields, _ = self._call("hello", {"client": f"vector-policy {__version__}"})
+            fields, _ = self._call("hello", {"client": f"vector-protocol {__version__}"})
         except PolicyUnavailable:
             self._abandon()  # a server that cannot build its policy has ended the session
             raise

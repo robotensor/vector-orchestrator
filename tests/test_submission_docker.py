@@ -81,7 +81,7 @@ def test_the_docker_client_gets_the_allow_list_and_the_authkey_only_when_it_runs
     assert "HF_TOKEN" not in docker.environ and "VECTOR_LIVE_TOKEN" not in docker.environ
     assert docker.environ["DOCKER_HOST"] == "unix:///run/docker.sock"
 
-    docker.run(["--name", "vector-policy-env", "img"], env={"VECTOR_PROTOCOL_AUTHKEY": "ab" * 16})
+    docker.run(["--name", "vector-protocol-env", "img"], env={"VECTOR_PROTOCOL_AUTHKEY": "ab" * 16})
     docker.image_id("img")
     ran = dict(line.split("=", 1) for line in (tmp_path / "env.run").read_text().splitlines())
     inspected = (tmp_path / "env.image").read_text()
@@ -102,14 +102,14 @@ def test_policy_containers_are_listed_with_their_labels_and_a_vanished_one_skipp
         'if [ "$1" = ps ]; then echo "$@" > ' + str(tmp_path / "ps") + "; printf 'aaa\\nbbb\\n'; "
         "exit 0; fi\n"
         "cat <<'JSON'\n"
-        '{"name": "/vector-policy-one", "running": true, "labels": '
+        '{"name": "/vector-protocol-one", "running": true, "labels": '
         '{"vector.orchestrator": "policy", "vector.shared-dir": "/work/a b,c/policy"}}\n'
         "JSON\n"
         "echo 'Error: No such container: bbb' >&2\nexit 1\n"
     )
     docker = Docker(binary=fake_binary(tmp_path / "docker", script))
     (found,) = docker.policy_containers()
-    assert found.name == "vector-policy-one" and found.running
+    assert found.name == "vector-protocol-one" and found.running
     assert found.labels["vector.shared-dir"] == "/work/a b,c/policy", "a path is taken whole"
     assert "label=vector.orchestrator=policy" in (tmp_path / "ps").read_text()
 
@@ -119,19 +119,19 @@ def test_a_containers_state_says_its_exit_its_error_and_whether_it_ran_out_of_me
     script = (
         f'echo "$5" > {seen}\n'
         'case "$6" in\n'
-        '  vector-policy-oom) echo "false true 137 " ;;\n'
-        '  vector-policy-live) echo "true false 0 " ;;\n'
-        "  vector-policy-err) echo 'false false 127 exec: \"python\": not found' ;;\n"
+        '  vector-protocol-oom) echo "false true 137 " ;;\n'
+        '  vector-protocol-live) echo "true false 0 " ;;\n'
+        "  vector-protocol-err) echo 'false false 127 exec: \"python\": not found' ;;\n"
         '  *) echo "Error: No such container: $6" >&2; exit 1 ;;\n'
         "esac\n"
     )
     docker = Docker(binary=fake_binary(tmp_path / "docker", script))
-    assert docker.state("vector-policy-oom") == ContainerState(False, 137, "", oom_killed=True)
+    assert docker.state("vector-protocol-oom") == ContainerState(False, 137, "", oom_killed=True)
     assert "{{.State.OOMKilled}}" in seen.read_text()
-    assert docker.state("vector-policy-live") == ContainerState(True, 0, "")
-    err = docker.state("vector-policy-err")
+    assert docker.state("vector-protocol-live") == ContainerState(True, 0, "")
+    err = docker.state("vector-protocol-err")
     assert (err.exit_code, err.error, err.oom_killed) == (127, 'exec: "python": not found', False)
-    gone = docker.state("vector-policy-gone")
+    gone = docker.state("vector-protocol-gone")
     assert (gone.running, gone.exit_code, gone.oom_killed) == (False, None, False)
     assert gone.error.startswith("no such container: Error: No such container")
 

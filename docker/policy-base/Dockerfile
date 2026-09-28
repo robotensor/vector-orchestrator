@@ -1,5 +1,5 @@
 # The base of every submission image (spec.json `submission.base_image`): the CUDA toolkit with
-# its compiler, a C toolchain, Python 3.10 with its headers and vector-policy, and nothing of the
+# its compiler, a C toolchain, Python 3.10 with its headers and vector-protocol, and nothing of the
 # orchestrator. The build context is the repository root:
 #
 #     vector-orchestrator submission build-base        # builds it and prints its digest
@@ -41,11 +41,12 @@ RUN groupadd --gid "${POLICY_GID}" policy \
 
 # The policy protocol, as the competitor's side serves it. Installed from this checkout, not from
 # an index, so the base holds exactly the protocol the orchestrator was built with.
-COPY packages/vector-protocol /opt/vector-policy
-RUN python -m pip install /opt/vector-policy && rm -rf /opt/vector-policy
+COPY packages/vector-protocol /opt/vector-protocol
+RUN python -m pip install /opt/vector-protocol && rm -rf /opt/vector-protocol
 
-# No entrypoint and no command: the orchestrator says what runs (python -m vector_protocol.serve ...),
-# and a submission's image adds only its files and its requirements.
+# No entrypoint and no command: the orchestrator says what runs
+# (python -m vector_protocol.serve ...), and a submission's image adds only its files and its
+# requirements.
 ENTRYPOINT []
 CMD []
 WORKDIR /submission

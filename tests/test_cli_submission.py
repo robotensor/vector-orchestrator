@@ -25,7 +25,7 @@ EXAMPLE = Path(__file__).resolve().parents[1] / "packages/vector-protocol/exampl
 @pytest.fixture
 def fake_docker(monkeypatch):
     fake = FakeDocker()
-    fake.images["vector-policy-base:latest"] = FAKE_BASE_DIGEST
+    fake.images["vector-protocol-base:latest"] = FAKE_BASE_DIGEST
     monkeypatch.setattr("vector_orchestrator.submissions.docker.Docker", lambda *a, **k: fake)
     yield fake
     fake.kill_all()
@@ -69,7 +69,7 @@ def test_check_takes_the_replay_example_through_every_step_and_reports_them(
     sha = lines[-1].split("@", 1)[1].split(":")[0]
     assert is_commit_sha(sha)
     assert "policy replay.policy:ReplayPolicy, requirements requirements.txt" in lines[2]
-    assert f"FROM vector-policy-base {FAKE_BASE_DIGEST}" in lines[3]
+    assert f"FROM vector-protocol-base {FAKE_BASE_DIGEST}" in lines[3]
     assert "action_type qpos" in lines[5] and "listening after" in lines[5]
     assert fake_docker.removed == [fake_docker.runs[0][fake_docker.runs[0].index("--name") + 1]]
     assert (tmp_path / "work" / "policy" / "policy.log").is_file(), "--work keeps the log"
@@ -248,8 +248,8 @@ def test_build_base_prints_the_digest(spec, fake_docker, capsys):
     out = capsys.readouterr()
     digest = out.out.strip()
     assert digest.startswith("sha256:") and len(digest) == 71
-    assert f"built vector-policy-base:{digest[7:]} in" in out.err
-    assert fake_docker.image_id(f"vector-policy-base:{digest[7:]}") == digest
+    assert f"built vector-protocol-base:{digest[7:]} in" in out.err
+    assert fake_docker.image_id(f"vector-protocol-base:{digest[7:]}") == digest
     assert main(["submission", "build-base", "--context", str(EXAMPLE.parents[3]), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["base"]["digest"] == digest
 
@@ -264,16 +264,16 @@ def test_prune_removes_the_submission_images_no_container_uses(
     capsys.readouterr()
     (checked,) = [ref for ref in fake_docker.images if ref.startswith("vector-submission:")]
     fake_docker.images["vector-submission:in-use"] = "sha256:" + "c" * 64
-    fake_docker.container_images["vector-policy-running"] = "vector-submission:in-use"
+    fake_docker.container_images["vector-protocol-running"] = "vector-submission:in-use"
 
     assert main(["submission", "prune"]) == 0
     out = capsys.readouterr().out.splitlines()
     assert out[0] == f"removed {checked}"
     assert out[1].startswith("kept    vector-submission:in-use: conflict")
     assert checked not in fake_docker.images and "vector-submission:in-use" in fake_docker.images
-    assert fake_docker.images["vector-policy-base:latest"] == FAKE_BASE_DIGEST
+    assert fake_docker.images["vector-protocol-base:latest"] == FAKE_BASE_DIGEST
 
-    del fake_docker.container_images["vector-policy-running"]
+    del fake_docker.container_images["vector-protocol-running"]
     assert main(["submission", "prune", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == {
         "removed": ["vector-submission:in-use"],

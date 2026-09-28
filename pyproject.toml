@@ -43,7 +43,7 @@ testpaths = ["tests", "packages/vector-protocol/tests"]
 # Two test trees share module names such as test_package.py.
 addopts = "--import-mode=importlib"
 # importlib mode puts no test directory on sys.path; the orchestrator's tests import their
-# conftest and store_helpers as plain modules, and the vector-policy tests share helpers from a
+# conftest and store_helpers as plain modules, and the vector-protocol tests share helpers from a
 # module of their own. The orchestrator's directory comes first, so `conftest` is its own.
 pythonpath = ["tests", "packages/vector-protocol/tests"]
 markers = [

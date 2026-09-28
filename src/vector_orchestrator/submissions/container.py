@@ -104,7 +104,7 @@ PREPARE_HOME = 'mkdir -p -m 0700 "$HOME" "$XDG_CACHE_HOME" && exec "$@"'
 SHARED_DIR_BYTES = 64 << 20
 SHARED_DIR_INODES = 64
 #: What the tmpfs is listed under in the host's mount table.
-SHARED_DIR_SOURCE = "vector-policy"
+SHARED_DIR_SOURCE = "vector-protocol"
 #: The shared tmpfs holds a socket and a log, so nothing written there runs, and a setuid bit or
 #: a device file means nothing; the bind mount into the container keeps these flags. The spec's
 #: tmpfs is then the only place code a policy writes can run from.

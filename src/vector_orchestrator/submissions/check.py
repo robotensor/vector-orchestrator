@@ -24,7 +24,7 @@ from .errors import SubmissionError, SubmissionRejected
 from .image import base_image, build_submission_image
 
 STEPS = ("resolve", "fetch", "manifest", "build", "start", "hello")
-CONTAINER_PREFIX = "vector-policy"
+CONTAINER_PREFIX = "vector-protocol"
 #: How long a submission's image may take to build - its requirements to install, with network.
 #: A wall clock the orchestrator enforces, so it belongs in `spec.budgets` next to
 #: `policy_start_seconds`; until the spec carries it (a dashboard change), it lives here.

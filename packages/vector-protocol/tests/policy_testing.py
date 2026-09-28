@@ -1,4 +1,4 @@
-"""Helpers shared by the vector-policy tests: demonstrations, a probe policy, a served policy."""
+"""Helpers shared by the vector-protocol tests: demonstrations, a probe policy, a served policy."""
 
 from __future__ import annotations
 

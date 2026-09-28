@@ -89,14 +89,14 @@ def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tm
     args = run_argv(
         spec,
         image="vector-submission:k-s",
-        name="vector-policy-x",
+        name="vector-protocol-x",
         socket_dir=tmp_path,
         owner=owner,
     )
     assert args == [
         "--detach",
         "--name",
-        "vector-policy-x",
+        "vector-protocol-x",
         "--label",
         "vector.orchestrator=policy",
         "--label",
@@ -272,7 +272,7 @@ def test_the_shared_directory_is_a_bounded_tmpfs_for_the_containers_lifetime(
         sandbox_spec,
         docker,
         built.tag,
-        name="vector-policy-bounded",
+        name="vector-protocol-bounded",
         socket_dir=shared,
         bounded=True,
     )
@@ -282,7 +282,7 @@ def test_the_shared_directory_is_a_bounded_tmpfs_for_the_containers_lifetime(
     assert SHARED_DIR_BYTES >= 8 << 20 and SHARED_DIR_INODES >= 8, "the socket and the log fit"
     container.close()
     assert shared_mounts == [("mount", shared, uid, gid), ("umount", shared)]
-    assert docker.removed == ["vector-policy-bounded"]
+    assert docker.removed == ["vector-protocol-bounded"]
     assert (shared / "policy.log").is_file(), "the log outlives the tmpfs"
     assert "listening on" in (shared / "policy.log").read_text()
     # By default a container is bounded exactly when this process can mount a tmpfs: root.
@@ -341,7 +341,7 @@ def test_hello_through_the_container_keeps_the_session_and_removal_follows(
     )
     shared = tmp_path / "s"
     with PolicyContainer(
-        sandbox_spec, docker, built.tag, name="vector-policy-test", socket_dir=shared, gpus=0
+        sandbox_spec, docker, built.tag, name="vector-protocol-test", socket_dir=shared, gpus=0
     ) as container:
         reply = container.hello(sandbox_spec.budgets["policy_start_seconds"])
         assert reply == {"protocol": 1, "action_type": "qpos", "policy": "pkg.policy:Policy"}
@@ -353,7 +353,7 @@ def test_hello_through_the_container_keeps_the_session_and_removal_follows(
         assert container.session.act({"obs": [0.0]}) == {"action": [0.0]}
         # The server unlinks the socket once its one client is in; the log stays.
         assert not container.socket_path.exists() and container.log_path.exists()
-        assert docker.state("vector-policy-test").running and docker.removed == []
+        assert docker.state("vector-protocol-test").running and docker.removed == []
         # The key crossed by variable name, in the docker client's environment, and nowhere on
         # the command line; it is 32 random bytes.
         (env,) = docker.run_envs
@@ -362,10 +362,11 @@ def test_hello_through_the_container_keeps_the_session_and_removal_follows(
         assert not any(env[AUTHKEY_ENV] in arg for arg in docker.runs[0])
         assert "--gpus" not in docker.runs[0]
     assert (
-        docker.removed == ["vector-policy-test"] and not docker.state("vector-policy-test").running
+        docker.removed == ["vector-protocol-test"]
+        and not docker.state("vector-protocol-test").running
     )
     container.close()
-    assert docker.removed == ["vector-policy-test"], "removed once"
+    assert docker.removed == ["vector-protocol-test"], "removed once"
 
 
 def test_an_owner_is_gone_when_its_process_is_and_not_while_it_runs():
@@ -388,43 +389,48 @@ def test_start_reaps_the_containers_of_processes_that_are_gone_and_nothing_else(
     ended = ended_process_owner()
     elsewhere = Owner(ended.pid, ended.start, "pid:[1]")
     policy = {"vector.orchestrator": "policy"}
-    docker.labels["vector-policy-orphan"] = {
+    docker.labels["vector-protocol-orphan"] = {
         **policy,
         **ended.labels(),
         "vector.shared-dir": str(tmp_path / "gone"),
     }
-    docker.labels["vector-policy-alive"] = {**policy, **Owner.current().labels()}
-    docker.labels["vector-policy-elsewhere"] = {**policy, **elsewhere.labels()}
-    docker.labels["vector-policy-unlabelled"] = dict(policy)
+    docker.labels["vector-protocol-alive"] = {**policy, **Owner.current().labels()}
+    docker.labels["vector-protocol-elsewhere"] = {**policy, **elsewhere.labels()}
+    docker.labels["vector-protocol-unlabelled"] = dict(policy)
     root = write_policy_repo(tmp_path / "repo")
     docker.images["x:y"] = FAKE_BASE_DIGEST
     built = build_submission_image(
         docker, sandbox_spec, root, check_repository(root, sandbox_spec), ref, base
     )
     with PolicyContainer(
-        sandbox_spec, docker, built.tag, name="vector-policy-new", socket_dir=tmp_path / "s", gpus=0
+        sandbox_spec,
+        docker,
+        built.tag,
+        name="vector-protocol-new",
+        socket_dir=tmp_path / "s",
+        gpus=0,
     ) as container:
-        assert container.reaped == ["vector-policy-orphan"]
-        assert docker.removed == ["vector-policy-orphan"]
+        assert container.reaped == ["vector-protocol-orphan"]
+        assert docker.removed == ["vector-protocol-orphan"]
         # The new container names its owner - this process - and its shared directory.
-        labels = docker.labels["vector-policy-new"]
+        labels = docker.labels["vector-protocol-new"]
         assert Owner.from_labels(labels) == Owner.current()
         assert labels["vector.shared-dir"] == str((tmp_path / "s").absolute())
     assert sorted(docker.labels) == [
-        "vector-policy-alive",
-        "vector-policy-elsewhere",
-        "vector-policy-unlabelled",
+        "vector-protocol-alive",
+        "vector-protocol-elsewhere",
+        "vector-protocol-unlabelled",
     ]
     # Where /proc cannot say who this process is, or docker cannot list, nothing is reaped.
-    docker.labels["vector-policy-orphan"] = {**policy, **ended.labels()}
+    docker.labels["vector-protocol-orphan"] = {**policy, **ended.labels()}
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(docker, "policy_containers", lambda: raise_(DockerError("refused")))
         assert reap_orphans(docker) == []
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(Owner, "current", classmethod(lambda cls: None))
         assert reap_orphans(docker) == []
-    assert "vector-policy-orphan" in docker.labels
-    assert reap_orphans(docker) == ["vector-policy-orphan"], "and once it can, it is"
+    assert "vector-protocol-orphan" in docker.labels
+    assert reap_orphans(docker) == ["vector-protocol-orphan"], "and once it can, it is"
 
 
 def raise_(exc: Exception):
@@ -440,7 +446,7 @@ def test_a_manifest_naming_a_missing_class_is_rejected_at_hello_and_the_containe
         docker, sandbox_spec, root, check_repository(root, sandbox_spec), ref, base
     )
     container = PolicyContainer(
-        sandbox_spec, docker, built.tag, name="vector-policy-missing", socket_dir=tmp_path / "s"
+        sandbox_spec, docker, built.tag, name="vector-protocol-missing", socket_dir=tmp_path / "s"
     )
     with pytest.raises(SubmissionRejected) as info:
         container.hello(sandbox_spec.budgets["policy_start_seconds"])
@@ -449,7 +455,7 @@ def test_a_manifest_naming_a_missing_class_is_rejected_at_hello_and_the_containe
     assert "--- policy log (tail) ---" in info.value.reason, "the server's log travels with it"
     assert container.session is None
     container.close()
-    assert docker.removed == ["vector-policy-missing"]
+    assert docker.removed == ["vector-protocol-missing"]
 
 
 def test_a_container_that_exits_before_listening_is_rejected_at_start(
@@ -462,13 +468,13 @@ def test_a_container_that_exits_before_listening_is_rejected_at_start(
     )
     (root / "policy.yaml").unlink()  # the server has nothing to serve and exits 2 at once
     with PolicyContainer(
-        sandbox_spec, docker, built.tag, name="vector-policy-dead", socket_dir=tmp_path / "s"
+        sandbox_spec, docker, built.tag, name="vector-protocol-dead", socket_dir=tmp_path / "s"
     ) as container:
         with pytest.raises(SubmissionRejected) as info:
             container.hello(sandbox_spec.budgets["policy_start_seconds"])
     assert info.value.step == "start"
     assert "exited (2) before listening" in info.value.reason
-    assert docker.removed == ["vector-policy-dead"]
+    assert docker.removed == ["vector-protocol-dead"]
 
 
 def test_a_policy_that_takes_longer_than_the_budget_to_build_is_rejected(
@@ -490,7 +496,7 @@ def test_a_policy_that_takes_longer_than_the_budget_to_build_is_rejected(
     )
     started = time.monotonic()
     with PolicyContainer(
-        sandbox_spec, docker, built.tag, name="vector-policy-slow", socket_dir=tmp_path / "s"
+        sandbox_spec, docker, built.tag, name="vector-protocol-slow", socket_dir=tmp_path / "s"
     ) as container:
         with pytest.raises(SubmissionRejected) as info:
             container.hello(3.0)

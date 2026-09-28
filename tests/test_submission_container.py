@@ -91,7 +91,7 @@ def running(spec, docker, replay, tmp_path):
         spec,
         docker,
         image.tag,
-        name="vector-policy-test-running",
+        name="vector-protocol-test-running",
         socket_dir=tmp_path / "s",
         gpus=0,
     )
@@ -160,7 +160,7 @@ def test_submission_check_on_the_replay_example_resolves_builds_and_says_hello(
     assert report["side"]["base_image"] == base.base.digest
     assert report["side"]["image"].startswith("sha256:")
     assert report["listening_after_s"] < spec.budgets["policy_start_seconds"]
-    assert "vector-policy-" not in " ".join(containers(docker)), "the container is gone"
+    assert "vector-protocol-" not in " ".join(containers(docker)), "the container is gone"
     # --work keeps the log after the shared directory's tmpfs is released.
     shared = tmp_path / "work" / "policy"
     assert not is_shared_mount(shared) and "listening on" in (shared / "policy.log").read_text()
@@ -185,8 +185,8 @@ def test_a_container_whose_owner_was_killed_before_hello_is_reaped_by_the_next_s
             "from vector_orchestrator.spec import load_spec\n"
             "from vector_orchestrator.submissions.container import PolicyContainer\n"
             "from vector_orchestrator.submissions.docker import Docker\n"
-            "c = PolicyContainer(load_spec(), Docker(), sys.argv[1], name='vector-policy-test-orphan',"
-            " socket_dir=Path(sys.argv[2]), gpus=0)\n"
+            "c = PolicyContainer(load_spec(), Docker(), sys.argv[1],"
+            " name='vector-protocol-test-orphan', socket_dir=Path(sys.argv[2]), gpus=0)\n"
             "c.start()\n"
             "print('started', flush=True)\n"
             "time.sleep(600)\n",
@@ -201,17 +201,17 @@ def test_a_container_whose_owner_was_killed_before_hello_is_reaped_by_the_next_s
     finally:
         child.kill()
         child.wait()
-    assert "vector-policy-test-orphan" in containers(docker)
-    assert docker.state("vector-policy-test-orphan").running, "the server waits for ever"
+    assert "vector-protocol-test-orphan" in containers(docker)
+    assert docker.state("vector-protocol-test-orphan").running, "the server waits for ever"
     if os.geteuid() == 0:
         assert is_shared_mount(shared)
     with PolicyContainer(
-        spec, docker, image.tag, name="vector-policy-test-next", socket_dir=tmp_path / "s", gpus=0
+        spec, docker, image.tag, name="vector-protocol-test-next", socket_dir=tmp_path / "s", gpus=0
     ) as container:
-        assert "vector-policy-test-orphan" in container.reaped
-        assert "vector-policy-test-orphan" not in containers(docker)
+        assert "vector-protocol-test-orphan" in container.reaped
+        assert "vector-protocol-test-orphan" not in containers(docker)
         assert not is_shared_mount(shared), "its tmpfs went with it"
-        assert "vector-policy-test-next" in containers(docker), "not the one it started"
+        assert "vector-protocol-test-next" in containers(docker), "not the one it started"
 
 
 # -- from inside --------------------------------------------------------------------------------
@@ -283,7 +283,12 @@ def test_neither_the_store_nor_another_socket_directory_is_visible(
     holding = Docker()
     _, _, image = replay
     with PolicyContainer(
-        spec, holding, image.tag, name="vector-policy-test-blind", socket_dir=tmp_path / "s", gpus=0
+        spec,
+        holding,
+        image.tag,
+        name="vector-protocol-test-blind",
+        socket_dir=tmp_path / "s",
+        gpus=0,
     ) as container:
         container.hello(spec.budgets["policy_start_seconds"])
         for path in (store, other, tmp_path):
@@ -328,7 +333,7 @@ def test_the_user_and_the_limits_are_the_specs(spec, docker, running):
 def test_the_gpu_is_there_when_the_spec_asks_for_one(spec, docker, replay, tmp_path):
     _, _, image = replay
     with PolicyContainer(
-        spec, docker, image.tag, name="vector-policy-test-gpu", socket_dir=tmp_path / "s"
+        spec, docker, image.tag, name="vector-protocol-test-gpu", socket_dir=tmp_path / "s"
     ) as container:
         container.hello(spec.budgets["policy_start_seconds"])
         done = inside(
@@ -363,7 +368,7 @@ def test_a_missing_class_is_rejected_at_hello_and_no_container_is_left(
     assert report.side()["revision"] == report.sha and report.side()["base_image"] == (
         base.base.digest
     )
-    assert not any(n.startswith(f"vector-policy-{report.key}") for n in containers(docker))
+    assert not any(n.startswith(f"vector-protocol-{report.key}") for n in containers(docker))
 
 
 def test_requirements_that_do_not_install_are_rejected_at_build_and_nothing_runs(
@@ -385,7 +390,7 @@ def test_requirements_that_do_not_install_are_rejected_at_build_and_nothing_runs
     assert "installing requirements.txt failed" in report.failed_step.detail
     assert "vector-no-such-package" in report.failed_step.detail
     assert [s.status for s in report.steps] == ["ok", "ok", "ok", "rejected", "skipped", "skipped"]
-    assert not any(n.startswith(f"vector-policy-{report.key}") for n in containers(docker))
+    assert not any(n.startswith(f"vector-protocol-{report.key}") for n in containers(docker))
     assert docker.image_id(f"vector-submission:{report.key}-{report.sha}") is None
     assert docker.image_refs(INDEX_PROBE_IMAGE) == [], "the probe leaves no image"
 
@@ -426,7 +431,7 @@ def test_a_build_that_prints_pips_network_failure_is_still_rejected_at_build(
     assert "Temporary failure in name resolution" in report.failed_step.detail, "the spoof's text"
     assert [s.status for s in report.steps] == ["ok", "ok", "ok", "rejected", "skipped", "skipped"]
     assert docker.image_id(f"vector-submission:{report.key}-{report.sha}") is None
-    assert not any(n.startswith(f"vector-policy-{report.key}") for n in containers(docker))
+    assert not any(n.startswith(f"vector-protocol-{report.key}") for n in containers(docker))
     assert docker.image_refs(INDEX_PROBE_IMAGE) == []
 
 
@@ -458,4 +463,4 @@ def test_requirements_that_never_finish_installing_are_rejected_at_build_in_time
     assert report.failed_step.detail == "installing requirements.txt did not finish within 20s"
     assert 20 <= took < 60, took
     assert docker.image_id(f"vector-submission:{report.key}-{report.sha}") is None
-    assert not any(n.startswith(f"vector-policy-{report.key}") for n in containers(docker))
+    assert not any(n.startswith(f"vector-protocol-{report.key}") for n in containers(docker))

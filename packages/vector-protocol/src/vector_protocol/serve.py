@@ -142,7 +142,7 @@ class _HangupWatch:
         os.set_blocking(fd, True)
         self._busy = threading.Event()
         self._op = ""
-        threading.Thread(target=self._run, name="vector-policy-hangup-watch", daemon=True).start()
+        threading.Thread(target=self._run, name="vector-protocol-hangup-watch", daemon=True).start()
 
     @contextlib.contextmanager
     def __call__(self, op: str) -> Iterator[None]:

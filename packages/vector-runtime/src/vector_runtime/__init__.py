@@ -8,7 +8,7 @@ turns those bytes into a policy is the validator's:
 - `vector_runtime.template`: the pinned architecture, `arch/<name>.cfg.json` (the resolved model and
   prompt-dataset configuration) and `arch/<name>.tensors.json` (every tensor's shape and dtype).
 - `vector_runtime.policy.VectorPolicy`: builds the model from the template, loads the weights and
-  serves it over the `vector-policy` protocol.
+  serves it over the `vector-protocol` protocol.
   the only code that unpickles, and only a file its caller owns.
 
 Importing this package imports nothing but the standard library.
