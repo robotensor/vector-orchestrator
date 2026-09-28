@@ -5,10 +5,10 @@ and a submission is untrusted code - so the two meet on a socket. This distribut
 that socket and nothing else: it knows no benchmark, no channel name and no simulator.
 
 - `Policy`: what a competitor implements.
-- `vector_policy.manifest`: `policy.yaml`, which names the policy in a competitor's repository.
-- `python -m vector_policy.serve`: serves that policy to one client.
-- `vector_policy.client.RemotePolicy`: the client a benchmark drives it with.
-- `vector_policy.wire`: the message format between them.
+- `vector_protocol.manifest`: `policy.yaml`, which names the policy in a competitor's repository.
+- `python -m vector_protocol.serve`: serves that policy to one client.
+- `vector_protocol.client.RemotePolicy`: the client a benchmark drives it with.
+- `vector_protocol.wire`: the message format between them.
 """
 
 from .errors import ManifestError, PolicyUnavailable, WireError

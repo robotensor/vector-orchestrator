@@ -8,8 +8,8 @@ from multiprocessing import Pipe
 import numpy as np
 import pytest
 
-from vector_policy import wire
-from vector_policy.errors import WireError
+from vector_protocol import wire
+from vector_protocol.errors import WireError
 
 
 class FrameConn:

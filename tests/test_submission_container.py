@@ -41,7 +41,7 @@ from vector_orchestrator.submissions.image import (
 pytestmark = pytest.mark.container
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = REPO_ROOT / "packages/vector-policy/examples/replay_policy"
+EXAMPLE = REPO_ROOT / "packages/vector-protocol/examples/replay_policy"
 
 
 @pytest.fixture(scope="module")
@@ -109,7 +109,7 @@ def inside(container: PolicyContainer, code: str) -> subprocess.CompletedProcess
 # -- the whole path -----------------------------------------------------------------------------
 
 
-def test_the_base_image_is_the_specs_name_with_python_and_vector_policy(docker, spec, base):
+def test_the_base_image_is_the_specs_name_with_python_and_vector_protocol(docker, spec, base):
     assert base.image_id.startswith("sha256:") and base.base.digest == base.image_id
     assert base.base.name == spec.submission["base_image"]["name"]
     assert docker.image_id(base.base.tag) == base.image_id
@@ -122,7 +122,7 @@ def test_the_base_image_is_the_specs_name_with_python_and_vector_policy(docker, 
             base.base.tag,
             "python",
             "-c",
-            "import sys, vector_policy; print(sys.version_info[:2], vector_policy.__version__)",
+            "import sys, vector_protocol; print(sys.version_info[:2], vector_protocol.__version__)",
         ]
     )
     assert done.stdout.strip().startswith("(3, 10) ")

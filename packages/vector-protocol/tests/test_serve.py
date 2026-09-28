@@ -1,4 +1,4 @@
-"""`python -m vector_policy.serve`, run as a real subprocess and spoken to over the raw wire format."""
+"""`python -m vector_protocol.serve`, run as a real subprocess and spoken to over the raw wire format."""
 
 import json
 import pickle
@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 from policy_testing import AUTHKEY_ENV, call, free_tcp_address, observation, write_repo
 
-from vector_policy import wire
-from vector_policy.serve import checked_action
+from vector_protocol import wire
+from vector_protocol.serve import checked_action
 
 
 class Boom:
@@ -310,7 +310,7 @@ def test_the_server_exits_even_if_the_policy_left_a_thread_and_an_exception_esca
 )
 def test_arguments_the_server_cannot_parse_exit_2(args):
     process = subprocess.run(
-        [sys.executable, "-m", "vector_policy.serve", *args], capture_output=True, timeout=60
+        [sys.executable, "-m", "vector_protocol.serve", *args], capture_output=True, timeout=60
     )
     assert process.returncode == 2
     assert b"usage:" in process.stderr

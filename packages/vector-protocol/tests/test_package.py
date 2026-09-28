@@ -1,7 +1,7 @@
 import subprocess
 import sys
 
-import vector_policy
+import vector_protocol
 
 # What a competitor's image or a benchmark process may hold; none of it belongs in this distribution.
 FORBIDDEN = {"sapien", "mujoco", "robosuite", "torch", "curobo", "vector_orchestrator", "yaml"}
@@ -22,16 +22,16 @@ def loaded_by(statement: str) -> set[str]:
 
 
 def test_importing_the_package_loads_no_simulator_model_stack_or_yaml():
-    assert not loaded_by("import vector_policy") & FORBIDDEN
+    assert not loaded_by("import vector_protocol") & FORBIDDEN
 
 
 def test_a_benchmark_importing_the_client_loads_numpy_and_the_standard_library_only():
-    loaded = loaded_by("import vector_policy.client")
+    loaded = loaded_by("import vector_protocol.client")
     assert not loaded & FORBIDDEN
-    assert loaded - set(sys.stdlib_module_names) <= {"numpy", "vector_policy"}
+    assert loaded - set(sys.stdlib_module_names) <= {"numpy", "vector_protocol"}
 
 
 def test_the_public_names_are_exported():
     for name in ("Policy", "PolicyUnavailable", "ManifestError", "WireError", "ACTION_TYPES"):
-        assert hasattr(vector_policy, name)
-    assert vector_policy.__version__
+        assert hasattr(vector_protocol, name)
+    assert vector_protocol.__version__

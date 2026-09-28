@@ -19,7 +19,7 @@ from vector_orchestrator.ids import is_commit_sha
 from vector_orchestrator.submissions.check import BUILD_TIMEOUT_S, STEPS, check_submission
 from vector_orchestrator.submissions.fetch import LocalFetcher, RepoCache
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "packages/vector-policy/examples/replay_policy"
+EXAMPLE = Path(__file__).resolve().parents[1] / "packages/vector-protocol/examples/replay_policy"
 
 
 @pytest.fixture

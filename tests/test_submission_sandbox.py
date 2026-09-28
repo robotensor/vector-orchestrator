@@ -1,6 +1,6 @@
 """A submission's container, with Docker stood in for.
 
-`FakeDocker.run` starts the real `python -m vector_policy.serve` on the host in the container's
+`FakeDocker.run` starts the real `python -m vector_protocol.serve` on the host in the container's
 place, so what is tested is the orchestrator's side of the sandbox: the arguments it would give
 `docker run`, the socket directory, the authkey, the wait for `hello` and the removal - not the
 kernel's isolation, which the container tests check for real.
@@ -161,7 +161,7 @@ def test_run_argv_is_exactly_the_specs_sandbox_and_one_shared_directory(spec, tm
     assert serve_argv(spec) == [
         "python",
         "-m",
-        "vector_policy.serve",
+        "vector_protocol.serve",
         "--manifest",
         f"/submission/{spec.submission['manifest']}",
         "--address",

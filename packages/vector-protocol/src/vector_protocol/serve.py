@@ -1,6 +1,6 @@
-"""`python -m vector_policy.serve`: one competitor's policy, served to one client.
+"""`python -m vector_protocol.serve`: one competitor's policy, served to one client.
 
-    python -m vector_policy.serve --manifest PATH --address ADDR --authkey-env NAME [--log-file PATH]
+    python -m vector_protocol.serve --manifest PATH --address ADDR --authkey-env NAME [--log-file PATH]
                                 [--idle-timeout-s SECONDS]
 
 `ADDR` is a Unix socket path or `host:port`. The environment variable `NAME` holds the
@@ -58,7 +58,7 @@ from .manifest import Manifest
 from .manifest import load as load_manifest
 from .policy import ACTION_TYPES
 
-log = logging.getLogger("vector_policy.serve")
+log = logging.getLogger("vector_protocol.serve")
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -344,7 +344,9 @@ def _redirect_output(path: Path) -> None:
 def _configure_logging() -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(
-        logging.Formatter("%(asctime)s vector_policy.serve[%(process)d] %(levelname)s %(message)s")
+        logging.Formatter(
+            "%(asctime)s vector_protocol.serve[%(process)d] %(levelname)s %(message)s"
+        )
     )
     log.handlers[:] = [handler]
     log.setLevel(logging.INFO)
@@ -368,7 +370,7 @@ def _accept(listener: Listener) -> Any:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m vector_policy.serve",
+        prog="python -m vector_protocol.serve",
         description="Serve the policy named by an policy.yaml to one client, then exit.",
     )
     parser.add_argument("--manifest", required=True, help="the competitor repository's policy.yaml")
@@ -409,7 +411,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             _redirect_output(log_file)
         except OSError as exc:
-            print(f"vector_policy.serve: cannot write the log file: {exc}", file=sys.stderr)
+            print(f"vector_protocol.serve: cannot write the log file: {exc}", file=sys.stderr)
             return EXIT_USAGE
     _configure_logging()
 

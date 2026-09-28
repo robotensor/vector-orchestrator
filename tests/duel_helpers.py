@@ -15,7 +15,7 @@ from vector_orchestrator.ids import SubmissionRef
 from vector_orchestrator.live import LiveReporter
 from vector_orchestrator.submissions.docker import DockerTimeout
 
-EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "vector-policy" / "examples"
+EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "vector-protocol" / "examples"
 REPLAY = EXAMPLES / "replay_policy"
 ZERO = EXAMPLES / "zero_policy"
 

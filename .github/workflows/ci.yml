@@ -20,11 +20,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "${{ matrix.python }}" }
-      - run: pip install -e ".[dev]" -e packages/vector-policy
+      - run: pip install -e ".[dev]" -e packages/vector-protocol
       - run: pytest -q -m "not sim and not container"
-  # vector-policy is installed into competitors' images on its own: test the built distribution in an
+  # vector-protocol is installed into competitors' images on its own: test the built distribution in an
   # environment holding nothing else but pytest.
-  vector-policy:
+  vector-protocol:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -34,6 +34,6 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "${{ matrix.python }}" }
       - run: python -m venv /tmp/policy-env
-      - run: /tmp/policy-env/bin/pip install ./packages/vector-policy pytest
+      - run: /tmp/policy-env/bin/pip install ./packages/vector-protocol pytest
       - run: /tmp/policy-env/bin/pip list
-      - run: /tmp/policy-env/bin/python -m pytest -q packages/vector-policy
+      - run: /tmp/policy-env/bin/python -m pytest -q packages/vector-protocol

@@ -46,7 +46,7 @@ def probe_repo(tmp_path):
 
 @pytest.fixture
 def serve():
-    """`serve(manifest, ...)`: `python -m vector_policy.serve` in a subprocess, listening."""
+    """`serve(manifest, ...)`: `python -m vector_protocol.serve` in a subprocess, listening."""
     started: list[Served] = []
     directories: list[str] = []
 
@@ -57,7 +57,7 @@ def serve():
         address = address or os.path.join(directory, "policy.sock")
         log_file = Path(directory) / "serve.log"
         environ = {**os.environ, AUTHKEY_ENV: authkey.hex(), **(env or {})}
-        argv = [sys.executable, "-m", "vector_policy.serve", "--manifest", str(manifest)]
+        argv = [sys.executable, "-m", "vector_protocol.serve", "--manifest", str(manifest)]
         argv += ["--address", address, "--authkey-env", AUTHKEY_ENV, "--log-file", str(log_file)]
         process = subprocess.Popen([*argv, *args], env=environ, cwd=directory)
         served = Served(process, address, authkey, log_file)

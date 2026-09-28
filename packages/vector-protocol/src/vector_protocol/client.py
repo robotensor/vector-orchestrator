@@ -7,7 +7,7 @@
         action = policy.act(observation)["action"]  # (A,) or a chunk (H, A)
 
 It needs numpy and the standard library only. A benchmark imports it; the competitor's side runs
-`python -m vector_policy.serve`.
+`python -m vector_protocol.serve`.
 
 **Every way the policy can fail raises `PolicyUnavailable`**: an error reply, a call that does not
 finish within `timeout_s`, a server that hangs up or was never there, a key it refuses, a reply
@@ -56,7 +56,7 @@ RETRY_S = 0.05
 
 
 class RemotePolicy:
-    """A policy served by `python -m vector_policy.serve` at `address`, reached with `authkey`."""
+    """A policy served by `python -m vector_protocol.serve` at `address`, reached with `authkey`."""
 
     def __init__(
         self,

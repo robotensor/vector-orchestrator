@@ -107,7 +107,7 @@ def test_check_catches_a_benchmark_that_would_fail_a_duel(
 
 
 def test_check_hands_run_command_an_address_in_the_wire_form(fake_spec, monkeypatch):
-    """The policy wire listens on a Unix socket path or host:port (vector_policy.wire), so a
+    """The policy wire listens on a Unix socket path or host:port (vector_protocol.wire), so a
     benchmark that follows the contract and checks the address must pass `check`, not be failed by
     a URL."""
     register(

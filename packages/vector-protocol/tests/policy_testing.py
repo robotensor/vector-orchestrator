@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from vector_policy import wire
+from vector_protocol import wire
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 

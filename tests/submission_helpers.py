@@ -226,7 +226,7 @@ class ProbeBuild:
 @dataclass
 class FakeDocker:
     """`Docker` without Docker: builds are recorded and given an id, and `run` starts
-    `python -m vector_policy.serve` on the host, with the image's checkout in place of /submission
+    `python -m vector_protocol.serve` on the host, with the image's checkout in place of /submission
     and the mounted directory in place of /run/vector, so the start-and-hello path runs for real.
     An index probe (a build tagged `INDEX_PROBE_IMAGE`) is kept apart in `probes`, and reaches
     the index while `index_reachable` says so."""

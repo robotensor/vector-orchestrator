@@ -3,7 +3,7 @@ import importlib
 import numpy as np
 import pytest
 
-from vector_policy import ACTION_TYPES, Policy, manifest
+from vector_protocol import ACTION_TYPES, Policy, manifest
 
 NAMES = ("replay_policy", "zero_policy")
 

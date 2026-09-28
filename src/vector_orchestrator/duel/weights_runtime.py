@@ -18,7 +18,7 @@ The seam is `SubprocessPolicyRuntime`'s, with three steps replaced:
   which builds the model and loads the weights: a file that passes the header check but does not
   load is refused here, before a unit is played.
 
-`serve` is the subprocess runtime's: a fresh `python -m vector_policy.serve` per unit, in the policy
+`serve` is the subprocess runtime's: a fresh `python -m vector_protocol.serve` per unit, in the policy
 environment (`python`), with a random key that travels by variable name.
 """
 
@@ -33,8 +33,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from vector_policy.client import RemotePolicy
-from vector_policy.errors import PolicyUnavailable
+from vector_protocol.client import RemotePolicy
+from vector_protocol.errors import PolicyUnavailable
 
 from ..ids import SubmissionRef
 from ..submissions import SubmissionError, SubmissionRejected

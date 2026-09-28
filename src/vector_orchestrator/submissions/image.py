@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from vector_policy.manifest import Manifest
+from vector_protocol.manifest import Manifest
 
 from ..ids import SubmissionRef
 from ..spec import IMAGE_DIGEST_RE

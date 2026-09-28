@@ -1,6 +1,6 @@
 """The duel's runtime seam over the submission sandbox, with `FakeDocker` in Docker's place.
 
-`FakeDocker.run` starts the real `python -m vector_policy.serve` on the host where the container
+`FakeDocker.run` starts the real `python -m vector_protocol.serve` on the host where the container
 would be, so a whole duel runs through the adapter: fetch, manifest, image, health check and one
 container per unit. `pytest -m container` runs the same duel with Docker itself.
 """

@@ -342,7 +342,7 @@ def test_a_local_directory_is_addressed_by_its_tree_and_copied_links_as_links(
 
 # -- checks -------------------------------------------------------------------------------------
 
-EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "vector-policy" / "examples"
+EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "vector-protocol" / "examples"
 
 
 def test_the_replay_example_passes_the_manifest_check(spec):
@@ -409,7 +409,7 @@ def test_requirements_must_be_a_plain_file_inside_the_repository(spec, tmp_path)
     with pytest.raises(SubmissionRejected, match="leaves the repository"):
         check_repository(root, spec)
 
-    # A link to a file that is inside: vector_policy resolves it happily; this check does not.
+    # A link to a file that is inside: vector_protocol resolves it happily; this check does not.
     (root / "deps").mkdir()
     (root / "deps" / "requirements.txt").write_text("numpy\n")
     os.symlink("deps/requirements.txt", root / "requirements.txt")

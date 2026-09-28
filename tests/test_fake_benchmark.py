@@ -21,7 +21,7 @@ import pytest
 
 from vector_orchestrator.benchmarks import subprocess_runner as runner
 
-EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "vector-policy" / "examples"
+EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "vector-protocol" / "examples"
 AUTHKEY_ENV = "VECTOR_TEST_POLICY_AUTHKEY"
 
 
@@ -47,14 +47,14 @@ def materialized(fake, unit, out: Path) -> Path:
 
 
 def serve(example: str, workdir: Path):
-    """`python -m vector_policy.serve` on an example repository; `(process, address, key)`."""
+    """`python -m vector_protocol.serve` on an example repository; `(process, address, key)`."""
     key = secrets.token_bytes(32)
     address = Path(tempfile.mkdtemp(prefix="vector-duel-test-")) / "policy.sock"
     process = subprocess.Popen(
         [
             sys.executable,
             "-m",
-            "vector_policy.serve",
+            "vector_protocol.serve",
             "--manifest",
             str(EXAMPLES / example / "policy.yaml"),
             "--address",

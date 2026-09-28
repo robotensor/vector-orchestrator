@@ -10,7 +10,7 @@ things, in order:
   can be published; a harness that cannot do its part raises `RuntimeUnavailable`, which judges
   nobody.
 - `serve(prepared, workdir=...)`: a context manager that serves the policy **for one unit** and
-  yields where to reach it. `python -m vector_policy.serve` accepts exactly one client and exits
+  yields where to reach it. `python -m vector_protocol.serve` accepts exactly one client and exits
   when it hangs up, so every unit gets a fresh policy process - which is also what keeps
   whatever a policy remembers from leaking from one unit into the next, and why a policy that died
   on one unit is simply served again for the next.
@@ -66,7 +66,7 @@ HARNESS = "harness"
 CAUSES = (POLICY, HARNESS)
 
 #: How much of a policy's log the copy a benchmark reads holds: its end, which is all a failure
-#: quotes (`vector_policy.logs.tail` reads at most 8 KiB).
+#: quotes (`vector_protocol.logs.tail` reads at most 8 KiB).
 LOG_TAIL_BYTES = 1 << 16
 #: How often that copy catches up with the log.
 LOG_MIRROR_S = 0.05

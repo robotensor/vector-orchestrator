@@ -16,8 +16,8 @@ import numpy as np
 import pytest
 from policy_testing import free_tcp_address, observation
 
-from vector_policy import PolicyUnavailable, WireError, wire
-from vector_policy.client import RemotePolicy
+from vector_protocol import PolicyUnavailable, WireError, wire
+from vector_protocol.client import RemotePolicy
 
 
 class Boom:

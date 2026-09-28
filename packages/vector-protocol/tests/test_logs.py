@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from vector_policy import logs
+from vector_protocol import logs
 
 
 def tail_within(path, seconds=5.0):

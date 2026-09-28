@@ -1,6 +1,6 @@
 """What a checkout is looked at for before any of it is built or run: its manifest.
 
-`vector_policy.manifest.load` reads the file and checks its schema. Before it is called, the file
+`vector_protocol.manifest.load` reads the file and checks its schema. Before it is called, the file
 itself is checked to be a plain entry of the repository: a git checkout can hold a symbolic link,
 and a manifest that is one - or a named pipe, or a directory - would have the orchestrator read
 something other than the repository's bytes, or block on them. The requirements file the manifest
@@ -14,9 +14,9 @@ import stat
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from vector_policy.errors import ManifestError
-from vector_policy.manifest import Manifest
-from vector_policy.manifest import load as load_manifest
+from vector_protocol.errors import ManifestError
+from vector_protocol.manifest import Manifest
+from vector_protocol.manifest import load as load_manifest
 
 from .errors import SubmissionRejected
 

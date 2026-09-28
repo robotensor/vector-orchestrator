@@ -1,7 +1,7 @@
 """A submission's policy served straight from a local directory, on this host: NO SANDBOX.
 
 `vector-orchestrator duel --runtime local` and the pure tests use it. It is `python -m
-vector_policy.serve` in a subprocess of this interpreter, on a Unix socket, with the directory
+vector_protocol.serve` in a subprocess of this interpreter, on a Unix socket, with the directory
 mapped by `--local REPO=DIR` as the submission's checkout: nothing is fetched, no image is built,
 the policy's requirements are whatever this environment holds, and the policy runs with every
 permission the orchestrator has. That is fine for the example policies and for code you wrote;
@@ -30,10 +30,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from vector_policy.client import RemotePolicy
-from vector_policy.errors import ManifestError, PolicyUnavailable
-from vector_policy.logs import tail
-from vector_policy.manifest import load as load_manifest
+from vector_protocol.client import RemotePolicy
+from vector_protocol.errors import ManifestError, PolicyUnavailable
+from vector_protocol.logs import tail
+from vector_protocol.manifest import load as load_manifest
 
 from ..benchmarks.subprocess_runner import benchmark_environment
 from ..ids import SubmissionRef, is_commit_sha
@@ -189,7 +189,7 @@ class SubprocessPolicyRuntime:
 
     @contextmanager
     def _serve(self, manifest: Path, workdir: Path) -> Iterator[tuple[ServedPolicy, bytes, Path]]:
-        """One `vector_policy.serve` process, listening; killed with its group on the way out.
+        """One `vector_protocol.serve` process, listening; killed with its group on the way out.
 
         Its log is written beside its socket, in a temporary directory of its own, and copied into
         `workdir` when it is over: nothing on the policy's command line names the run directory,
@@ -208,7 +208,7 @@ class SubprocessPolicyRuntime:
         argv = [
             self.python,
             "-m",
-            "vector_policy.serve",
+            "vector_protocol.serve",
             "--manifest",
             str(manifest),
             "--address",

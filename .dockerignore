@@ -1,8 +1,8 @@
 # The repository root is the build context of docker/policy-base/Dockerfile, which copies
-# packages/vector-policy and nothing else; the rest of the checkout (the venv above all) stays out
+# packages/vector-protocol and nothing else; the rest of the checkout (the venv above all) stays out
 # of the context.
 *
-!packages/vector-policy
-packages/vector-policy/**/__pycache__
-packages/vector-policy/**/*.egg-info
-packages/vector-policy/**/.pytest_cache
+!packages/vector-protocol
+packages/vector-protocol/**/__pycache__
+packages/vector-protocol/**/*.egg-info
+packages/vector-protocol/**/.pytest_cache

@@ -10,7 +10,7 @@ candidates, its "expert" builds on the first, or rejects it and builds on the se
 `--behaviour reject_first`; its result names the seed it built on, as RoboTwin's does.
 
 `run` with `--behaviour policy` (what a duel's units get) drives the served policy through
-`vector_policy.client.RemotePolicy`: hello, the demonstration without `meta`, reset, then one `act`
+`vector_protocol.client.RemotePolicy`: hello, the demonstration without `meta`, reset, then one `act`
 per demonstrated action. The episode succeeds iff the policy's actions are the demonstration's, so
 the replay example wins and the zero example loses. A policy that is lost or does not answer in
 time ends the episode void with `void_cause: "policy"`, as the RoboTwin plugin reports it: the
@@ -147,7 +147,7 @@ def run(args: argparse.Namespace) -> int:
             "progress": 1.0 if behaviour == "succeed" else 0.25,
         }
     if args.policy_log:
-        from vector_policy.logs import tail
+        from vector_protocol.logs import tail
 
         (out / "policy-log-seen.txt").write_text(tail(args.policy_log))
     result["prompt_sha256"] = prompt_sha256
@@ -177,7 +177,7 @@ def drive_policy(args: argparse.Namespace) -> dict:
     """One episode against the served policy: act once per demonstrated action."""
     import numpy as np
 
-    from vector_policy.client import PolicyUnavailable, RemotePolicy
+    from vector_protocol.client import PolicyUnavailable, RemotePolicy
 
     deadline = math.inf
     if args.unit_timeout_s is not None:

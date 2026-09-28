@@ -8,7 +8,7 @@
                --env TRITON_CACHE_DIR=... --env TORCHINDUCTOR_CACHE_DIR=...
                --env TORCH_EXTENSIONS_DIR=... --env VECTOR_POLICY_AUTHKEY <image>
                sh -c 'mkdir -p -m 0700 "$HOME" "$XDG_CACHE_HOME" && exec "$@"' sh
-               python -m vector_policy.serve --manifest /submission/policy.yaml
+               python -m vector_protocol.serve --manifest /submission/policy.yaml
                       --address /run/vector/policy.sock --authkey-env VECTOR_POLICY_AUTHKEY
                       --log-file /run/vector/policy.log
 
@@ -34,7 +34,7 @@ nothing it writes there runs, and the log is copied out before the tmpfs goes. N
 and the only variable that crosses is the authkey, by name: `docker run --env NAME` takes the
 value from the docker client's environment, so it is never on a command line.
 
-The health check is `hello` through `vector_policy.client.RemotePolicy` within
+The health check is `hello` through `vector_protocol.client.RemotePolicy` within
 `budgets.policy_start_seconds`, which builds the policy inside the container. The container is
 removed (`docker rm -f`) when the host object closes, however things went.
 
@@ -59,8 +59,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from vector_policy.client import RemotePolicy
-from vector_policy.errors import PolicyUnavailable
+from vector_protocol.client import RemotePolicy
+from vector_protocol.errors import PolicyUnavailable
 
 from .docker import CONTAINER_LABEL, Docker
 from .errors import SubmissionError, SubmissionRejected
@@ -175,7 +175,7 @@ def serve_argv(spec: Any) -> list[str]:
     return [
         "python",
         "-m",
-        "vector_policy.serve",
+        "vector_protocol.serve",
         "--manifest",
         f"{SUBMISSION_DIR}/{manifest}",
         "--address",
@@ -522,7 +522,7 @@ class PolicyContainer:
             time.sleep(POLL_S)
 
     def _log_tail(self) -> str:
-        from vector_policy.logs import tail
+        from vector_protocol.logs import tail
 
         served = tail(self.log_path)
         return served if served else self.docker.logs(self.name)

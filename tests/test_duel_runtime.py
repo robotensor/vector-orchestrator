@@ -108,7 +108,7 @@ def test_a_directory_without_a_manifest_is_refused(spec, tmp_path):
 
 
 def test_each_serve_is_a_fresh_server_with_its_own_key_gone_after_its_unit(runtime, tmp_path):
-    from vector_policy.client import RemotePolicy
+    from vector_protocol.client import RemotePolicy
 
     prepared = runtime.prepare(
         runtime.fetch(runtime.resolve("org/zero", "d" * 40), workdir=tmp_path), workdir=tmp_path
@@ -130,7 +130,7 @@ def test_each_serve_is_a_fresh_server_with_its_own_key_gone_after_its_unit(runti
 def test_a_local_policy_is_told_nothing_of_the_run_directory_and_its_log_lands_there(
     spec, tmp_path
 ):
-    from vector_policy.client import RemotePolicy
+    from vector_protocol.client import RemotePolicy
 
     seen = []
 

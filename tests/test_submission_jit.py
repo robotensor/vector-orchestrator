@@ -35,7 +35,7 @@ from vector_orchestrator.submissions.image import (
     build_submission_image,
     sandbox_user,
 )
-from vector_policy.errors import PolicyUnavailable
+from vector_protocol.errors import PolicyUnavailable
 
 pytestmark = pytest.mark.container
 
