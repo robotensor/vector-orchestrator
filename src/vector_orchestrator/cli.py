@@ -29,17 +29,17 @@ def _spec(args: argparse.Namespace):
 def cmd_benchmarks(args: argparse.Namespace) -> int:
     spec = _spec(args)
     if args.benchmarks_cmd == "list":
-        from .benchmarks.plugins import discover
+        from .benchmarks.drivers import discover
 
         rows = discover(spec)
         if args.json:
             print(json.dumps([r.as_dict() for r in rows.values()], indent=2, sort_keys=True))
             return 0
         for row in rows.values():
-            where = f"{row.distribution or '-'} {row.version or ''}".strip()
+            where = row.workdir or "-"
             state = "; ".join(row.problems) if row.problems else "ok"
             notes = f" ({'; '.join(row.notes)})" if row.notes else ""
-            print(f"{row.name:<12} {where:<36} {state}{notes}")
+            print(f"{row.name:<12} {where:<44} {state}{notes}")
         return 0
 
     from .benchmarks.check import check_benchmark
@@ -667,11 +667,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--spec", help="path to spec.json (default: packaged, or the repository's)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    bm = sub.add_parser("benchmarks", help="the benchmarks plugged into this host")
+    bm = sub.add_parser(
+        "benchmarks", help="the benchmarks this orchestrator drives, and their checkouts here"
+    )
     bm_sub = bm.add_subparsers(dest="benchmarks_cmd", required=True)
-    bm_list = bm_sub.add_parser("list", help="every declared or installed benchmark (no import)")
+    bm_list = bm_sub.add_parser(
+        "list", help="every declared benchmark and where its checkout is (nothing run)"
+    )
     bm_list.add_argument("--json", action="store_true")
-    bm_check = bm_sub.add_parser("check", help="load one benchmark and check it against the spec")
+    bm_check = bm_sub.add_parser(
+        "check", help="ask one benchmark's checkout and check it against the spec"
+    )
     bm_check.add_argument("id")
     bm_check.add_argument("--json", action="store_true")
     bm.set_defaults(func=cmd_benchmarks)

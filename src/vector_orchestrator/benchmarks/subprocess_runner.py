@@ -93,6 +93,23 @@ def benchmark_environment(
     return {k: v for k, v in source.items() if k in names or k.startswith(ENV_ALLOW_PREFIXES)}
 
 
+def workdir_of(benchmark: Any) -> str | None:
+    """The checkout a benchmark's commands run from, or None to run them where the orchestrator
+    runs: a fork run from its checkout (`python -m robotensor_bench.cli`) needs its root as the
+    working directory and on `PYTHONPATH`."""
+    workdir = getattr(benchmark, "workdir", None)
+    return str(workdir) if workdir else None
+
+
+def in_workdir(env: Mapping[str, str], workdir: str | None) -> dict[str, str]:
+    """`env` with `workdir` first on `PYTHONPATH`, so `python -m` finds the checkout's package
+    wherever the command is started from. The orchestrator's own `PYTHONPATH` is never passed on."""
+    out = dict(env)
+    if workdir:
+        out["PYTHONPATH"] = workdir
+    return out
+
+
 @dataclass
 class Outcome:
     """One unit's result, with the defaults in one place: a benchmark that reports only what the
@@ -234,6 +251,7 @@ def run_argv(
     stall_s: float | None = None,
     min_cpu_rate: float = MIN_CPU_RATE,
     watch_pgids: Iterable[int] = (),
+    cwd: str | None = None,
 ) -> Completed:
     """Run `argv` to completion or to `timeout_s`, its output going to `log_path`.
 
@@ -247,7 +265,7 @@ def run_argv(
     simulator that forked a renderer must not outlive its unit and hold the GPU for the next one.
     Only a kill that runs no `finally` escapes that; for it, `ledger` (anything with
     `started(pid)` and `ended(pid)`) is told of the group while it runs, so whoever starts next
-    can find and end it.
+    can find and end it. `cwd` is the directory it runs in: a benchmark's checkout (`workdir_of`).
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
@@ -259,6 +277,7 @@ def run_argv(
                 stdout=sink,
                 stderr=subprocess.STDOUT,
                 env=dict(env),
+                cwd=cwd,
                 start_new_session=True,
             )
         except OSError as exc:
@@ -370,7 +389,10 @@ def run_unit(
     started = time.monotonic()
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    environ = dict(benchmark_environment(os.environ, authkey_env) if env is None else env)
+    workdir = workdir_of(benchmark)
+    environ = in_workdir(
+        benchmark_environment(os.environ, authkey_env) if env is None else env, workdir
+    )
 
     def void(reason: str) -> Outcome:
         return voided(f"{name}: {reason}", wall_s=round(time.monotonic() - started, 3))
@@ -415,6 +437,7 @@ def run_unit(
         stall_s=stall_s,
         min_cpu_rate=min_cpu_rate,
         watch_pgids=watch_pgids,
+        cwd=workdir,
     )
     if done.start_error is not None:
         return void(f"could not start the benchmark: {done.start_error}")

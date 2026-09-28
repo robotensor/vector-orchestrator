@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import importlib
 import json
 import os
 import sys
@@ -8,20 +9,19 @@ from pathlib import Path
 
 import pytest
 
-from vector_orchestrator.benchmarks.api import ENTRY_POINT_GROUP
+from vector_orchestrator.benchmarks import drivers
 from vector_orchestrator.spec import load_spec, load_spec_file
 
 TRACK = "franka_1arm"
 
-#: A site directory holding the fake benchmark's package and its `.dist-info`, so prepending it
-#: to `sys.path` installs the plugin for real: `importlib.metadata` finds its entry point exactly
-#: as it finds a pip-installed one.
+#: The directory holding the fake benchmark's package and its stand-in simulator: prepended to
+#: `sys.path` and registered as the `fake` driver, it runs a duel the way RoboTwin's driver does.
 FAKE_SITE = Path(__file__).resolve().parent / "fake_benchmark"
 FAKE_PIN = {
-    "distribution": "vector-fake-benchmark",
-    "api_version": 1,
-    "version": "0.1.0",
-    "wheel_sha256": None,
+    "repo": "robotensor/fake-benchmark",
+    "branch": None,
+    "module": "vector_fake_benchmark.command",
+    "api_version": 2,
 }
 #: Modules the fake distributions bring; dropped after each test so none leaks into the next.
 FAKE_MODULE_PREFIXES = ("vector_fake_benchmark", "vector_fake_simulator", "vector_variant_")
@@ -118,36 +118,11 @@ def _forget_fake_modules():
 
 @pytest.fixture
 def fake_installed(monkeypatch):
-    """The fake benchmark distribution, installed on `sys.path`."""
+    """The fake benchmark, on `sys.path` and registered as the `fake` driver."""
     monkeypatch.syspath_prepend(str(FAKE_SITE))
+    monkeypatch.setitem(
+        drivers.DRIVERS,
+        "fake",
+        lambda pin: importlib.import_module("vector_fake_benchmark").BENCHMARK,
+    )
     return FAKE_SITE
-
-
-@pytest.fixture
-def install_distribution(tmp_path, monkeypatch):
-    """Install a throwaway distribution: a `.dist-info` with entry points, its modules, and
-    optionally the PEP 610 `direct_url.json` an installer would have written."""
-
-    def install(
-        name: str,
-        *,
-        entry_points: dict[str, str],
-        modules: dict[str, str],
-        version: str = "0.1.0",
-        direct_url: dict | None = None,
-        group: str = ENTRY_POINT_GROUP,
-    ) -> Path:
-        site = tmp_path / f"site-{name}"
-        info = site / f"{name.replace('-', '_')}-{version}.dist-info"
-        info.mkdir(parents=True)
-        (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n")
-        lines = [f"[{group}]"] + [f"{k} = {v}" for k, v in entry_points.items()]
-        (info / "entry_points.txt").write_text("\n".join(lines) + "\n")
-        if direct_url is not None:
-            (info / "direct_url.json").write_text(json.dumps(direct_url))
-        for module, code in modules.items():
-            (site / f"{module}.py").write_text(code)
-        monkeypatch.syspath_prepend(str(site))
-        return site
-
-    return install

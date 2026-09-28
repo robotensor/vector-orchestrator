@@ -1,25 +1,27 @@
-"""What a benchmark distribution must expose, and how the orchestrator checks it.
+"""What a benchmark is to the orchestrator, and how the orchestrator checks it.
 
-A benchmark is a separate repository, installed as its own distribution and found through the
-`robotensor.benchmarks` entry point group. This module is the contract between the two, and it is
-deliberately one-directional: a benchmark must never import `vector_orchestrator`, because a
-benchmark that stands on its own cannot depend on the competition that scores it. So `Benchmark` is
-a `Protocol`, nothing is subclassed, and a plugin is checked structurally by `validate_plugin`.
+A benchmark is a fork of its simulator with the competition's harness inside it, run from its
+checkout, never installed: RoboTwin-Vector runs `python -m robotensor_bench.cli ...` in its own
+environment. Nothing of a benchmark is imported here. For each benchmark it knows, the orchestrator
+holds a driver (`drivers.DRIVERS`) with the surface below: `Benchmark` is that surface, a
+`Protocol` checked structurally by `validate_benchmark`, so a test can stand a fake in its place.
 
 The surface splits in two, and the split is the reason the design works:
 
-`PURE_METHODS` must import and run with **no simulator, no assets and no GPU**. The orchestrator
-host, CI and a laptop all read a benchmark's catalogue, derive its unit list and verify a prompt;
-none of them can build a scene. A plugin therefore keeps every simulator import function-local, or
-better, out of the plugin module altogether.
+`PURE_METHODS` run in the orchestrator's process with **no simulator, no assets and no GPU**. The
+orchestrator host, CI and a laptop all read a benchmark's catalogue, deal its units and verify a
+prompt; none of them can build a scene. A driver answers them itself (dealing units, reading a
+result file) or asks the checkout through a command that needs no simulator (`tasks list`,
+`demo verify`).
 
 `COMMAND_METHODS` return an **argv**, not a result. Everything that needs a simulator happens in a
-subprocess the orchestrator launches, so the orchestrator never imports SAPIEN or MuJoCo, and the
-simulator side can run in another image without a line changing here. The files each command
-writes into its `out_dir` are named below (`PROMPT_FILE` and friends).
+subprocess the orchestrator launches, from the benchmark's `workdir` when it has one, so the
+orchestrator never imports SAPIEN or MuJoCo. The files each command writes into its `out_dir` are
+named below (`PROMPT_FILE` and friends).
 
-`api_version` is checked. Version 1 was designed against one benchmark (RoboTwin) and the second
-will bend it; bumping it is expected, and is why the number is on the plugin rather than implied.
+A driver may also have `prepare(suites)`, which asks the checkout what a duel over those suites
+needs before any unit is dealt, and refuses (`BenchmarkRefused`) a checkout that cannot run them.
+`api_version` is the command-line contract a driver speaks with its checkout; the spec pins it.
 """
 
 from __future__ import annotations
@@ -28,17 +30,15 @@ import inspect
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
 
-#: The ABI this orchestrator speaks. A plugin declaring another number is refused rather than
-#: called: the failure modes of a half-matching benchmark are silent and expensive.
-BENCHMARK_API_VERSION = 1
+#: The contract this orchestrator drives a benchmark's checkout by: its command line's verbs, flags,
+#: files and exit codes. 1 was the in-process plugin ABI of the installed distributions it replaced.
+BENCHMARK_API_VERSION = 2
 
-#: Where a benchmark distribution advertises itself. The entry point's name is the benchmark id a
-#: skill names in `spec.json`; its value is the plugin object, or a module exposing `BENCHMARK`.
-ENTRY_POINT_GROUP = "robotensor.benchmarks"
 
-#: The group benchmarks advertised themselves in before the competitions were named. Third parties
-#: register into a group, so it is still read: a benchmark published under it keeps being found.
-LEGACY_ENTRY_POINT_GROUPS = ("icil.benchmarks",)
+class BenchmarkRefused(RuntimeError):
+    """A benchmark has no driver here, its checkout is missing or unusable, or it does not match
+    its pin."""
+
 
 #: Importable and callable with no simulator, no assets and no GPU.
 PURE_METHODS = ("info", "catalogue", "derive_units", "verify_prompt", "read_result")
@@ -79,9 +79,9 @@ INSTANCE_PARAM_KEYS = ("scene_seed", "embodiment")
 class Benchmark(Protocol):
     """One benchmark, as the orchestrator sees it."""
 
-    #: Stable identifier, matching the entry point's name and `skills.<skill>.benchmark`.
+    #: Stable identifier, matching `benchmarks.<id>` and `skills.<skill>.benchmark` in the spec.
     id: str
-    #: The `BENCHMARK_API_VERSION` this plugin was written against.
+    #: The `BENCHMARK_API_VERSION` this driver speaks.
     api_version: int
 
     # -- pure ---------------------------------------------------------------------------
@@ -101,11 +101,11 @@ class Benchmark(Protocol):
         """`count` units from `suite` (restricted to `category` when given), a pure function of
         its arguments.
 
-        Only the benchmark knows what a unit of it means - a scene seed, an embodiment - which is
-        why derivation lives here and not in the orchestrator. It must be reproducible by a third
-        party holding the published record, so derive from a hash of `seed_material`, never from
-        a global RNG whose stream depends on a library version. Each unit carries at least
-        `UNIT_KEYS`, and its `instance_params` at least `INSTANCE_PARAM_KEYS`.
+        What a unit of a benchmark is - a scene seed, an embodiment - is its driver's to say. It
+        must be reproducible by a third party holding the published record, so derive from a hash
+        of `seed_material`, never from a global RNG whose stream depends on a library version.
+        Each unit carries at least `UNIT_KEYS`, and its `instance_params` at least
+        `INSTANCE_PARAM_KEYS`.
         """
 
     def verify_prompt(self, *, path: str, unit: Mapping[str, Any]) -> dict[str, Any]:
@@ -149,11 +149,11 @@ class Benchmark(Protocol):
         """
 
 
-def validate_plugin(obj: Any) -> list[str]:
-    """Everything wrong with `obj` as a benchmark plugin, in the order a reader would find it.
+def validate_benchmark(obj: Any) -> list[str]:
+    """Everything wrong with `obj` as a benchmark, in the order a reader would find it.
 
-    Structural, not nominal: a plugin cannot subclass anything of ours without importing us.
-    Returns an empty list when the plugin is usable.
+    Structural, not nominal, so a test's fake stands in for a driver without subclassing it.
+    Returns an empty list when the benchmark is usable.
     """
     errors: list[str] = []
 

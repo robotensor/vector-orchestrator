@@ -69,7 +69,7 @@ def record_given(out: Path, args: argparse.Namespace) -> None:
     """`given.json`: the command's arguments and environment, without the policy's key."""
     secret = getattr(args, "authkey_env", None)
     environ = {k: v for k, v in os.environ.items() if k != secret}
-    given = {"args": vars(args), "environ": environ}
+    given = {"args": vars(args), "environ": environ, "cwd": os.getcwd()}
     (out / "given.json").write_text(json.dumps(given, sort_keys=True))
 
 

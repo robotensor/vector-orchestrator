@@ -67,7 +67,6 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -307,7 +306,7 @@ class Orchestrator:
         self.live = live or LiveReporter(spec, None, None)
         self.mirror = mirror
         if resolve is None:
-            from ..benchmarks.plugins import load
+            from ..benchmarks.drivers import load
 
             def resolve(name: str) -> Any:
                 return load(spec, name)
@@ -512,14 +511,28 @@ class Orchestrator:
     # -- phases -----------------------------------------------------------------------------
 
     def _derive(self, duel: _Duel) -> None:
-        """The units: a benchmark that is not installed stops the duel before anything is fetched."""
-        from ..benchmarks.plugins import BenchmarkRefused
+        """The units: a benchmark whose checkout is missing or cannot run the track's suites stops
+        the duel before anything is fetched, and the duel waits for it."""
+        from ..benchmarks.api import BenchmarkRefused
         from ..benchmarks.units import DerivationError
 
         req = duel.req
         try:
             for name in self.spec.benchmarks_of(req.track):
-                duel.benchmarks[name] = self.resolve(name)
+                benchmark = self.resolve(name)
+                prepare = getattr(benchmark, "prepare", None)
+                if callable(prepare):
+                    skills = self.spec.skills(req.track)
+                    prepare(
+                        list(
+                            dict.fromkeys(
+                                self.spec.suite(s)
+                                for s in skills
+                                if self.spec.benchmark_of(s) == name
+                            )
+                        )
+                    )
+                duel.benchmarks[name] = benchmark
             duel.unit_defs = plugin_units(
                 self.spec,
                 req.track,
@@ -879,17 +892,13 @@ class Orchestrator:
 
     def _benchmark_info(self, duel: _Duel) -> dict[str, Any]:
         out: dict[str, Any] = {}
-        for name, plugin in duel.benchmarks.items():
+        for name, benchmark in duel.benchmarks.items():
             pin = self.spec.benchmark_pin(name) or {}
             try:
-                info = json.loads(json.dumps(plugin.info(), default=str))
+                info = json.loads(json.dumps(benchmark.info(), default=str))
             except Exception as exc:  # noqa: BLE001 - recorded, since the duel already ran
                 info = {"error": f"{type(exc).__name__}: {exc}"}
-            try:
-                installed = metadata.version(str(pin.get("distribution")))
-            except (metadata.PackageNotFoundError, ValueError):
-                installed = None
-            out[name] = {"info": info, "pin": pin, "installed_version": installed}
+            out[name] = {"info": info, "pin": pin}
         return out
 
     def push_touched(self) -> None:

@@ -293,7 +293,7 @@ class Daemon:
         return True
 
     def _benchmarks_ready(self, track: str) -> bool:
-        from .benchmarks.plugins import BenchmarkRefused
+        from .benchmarks.api import BenchmarkRefused
 
         for name in self.spec.benchmarks_of(track):
             try:

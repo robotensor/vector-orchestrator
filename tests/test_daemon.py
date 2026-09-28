@@ -170,7 +170,7 @@ def test_a_duel_resumed_while_its_benchmark_is_missing_stays_in_progress_for_a_l
         killed.step(TRACK)
     taken = queues[TRACK].reload().in_progress
 
-    doc = fake_spec_doc(spec_doc, pin={**FAKE_PIN, "version": "9.9.9"})  # mid-upgrade
+    doc = fake_spec_doc(spec_doc, pin={**FAKE_PIN, "module": "vector_fake_benchmark.next"})
     doc["budgets"]["act_timeout_s"] = 2.0
     upgrading = write_spec(doc, name="upgrading.json")
     assert daemon(upgrading, store, tmp_path).step(TRACK) is False
@@ -279,7 +279,7 @@ def test_the_king_queued_again_is_dropped_without_a_duel(duel_spec, store, queue
 def test_a_track_whose_benchmark_is_missing_is_skipped_and_its_queue_kept(
     spec_doc, write_spec, store, queues, tmp_path
 ):
-    doc = fake_spec_doc(spec_doc, pin={**FAKE_PIN, "version": "9.9.9"})
+    doc = fake_spec_doc(spec_doc, pin={**FAKE_PIN, "module": "vector_fake_benchmark.next"})
     spec = write_spec(doc, name="wrong-pin.json")
     add(queues, REPLAY_REF)
     assert daemon(spec, store, tmp_path).step(TRACK) is False

@@ -34,15 +34,14 @@
  },
  "benchmarks": {
   "robotwin": {
-   "distribution": "robotensor-benchmark-robotwin",
    "repo": "robotensor/RoboTwin-Vector",
-   "api_version": 1,
-   "version": null,
-   "wheel_sha256": null,
-   "_comment": "Pinned by distribution, version and wheel sha256 once the wheel is built (robotensor/RoboTwin-Vector#86). Entry-point discovery imports code into the orchestrator, so the pin is checked from the installed distribution's metadata before anything is imported from it. null means not yet pinned, and `vector-orchestrator benchmarks check` says so."
+   "branch": "vector",
+   "module": "robotensor_bench.cli",
+   "api_version": 2,
+   "_comment": "The RoboTwin fork with the level gate and the competition's harness in robotensor_bench/, branch vector. Run from its checkout, never installed: the orchestrator's driver runs `python -m robotensor_bench.cli` from the checkout this host names ($ROBOTWIN_BENCH_ROOT), under the simulator's interpreter ($ROBOTWIN_BENCH_PYTHON). api_version is the command line's contract; the driver checks the one the checkout reports (config check) and holds every command and result to the harness source it reports."
   }
  },
- "_benchmarks_comment": "Every benchmark is a separate distribution found through the `robotensor.benchmarks` entry point group. The orchestrator ships none: what it can score is exactly what is plugged into it.",
+ "_benchmarks_comment": "Every benchmark is a fork run from its checkout and driven through its command line by a driver the orchestrator holds for it (benchmarks/drivers.py): the orchestrator imports none of it. What a suite draws from and how units are dealt is the driver's; the task table, the prompt format and the harness are the checkout's.",
  "skills": {
   "franka_pick_and_place": {
    "code": "fp",
@@ -129,7 +128,7 @@
    }
   }
  },
- "_skills_comment": "The skills are the three categories of the benchmark's surveyed `franka_1arm` suite (robotwin_bench/tasks.yml and docs/results/survey-franka-1arm.json in robotensor/RoboTwin-Vector at 98a7ffd): pick_and_place is place_empty_cup, stacking is stack_bowls_two, press_push is click_bell and press_stapler. The survey was small, 6 tasks x 3 seeds on a dual Franka, keeping a task whose expert solved at least 2 of 3 seeds with one arm. Stacking has no one-arm task, so stack_bowls_two, whose expert may switch arms, stands in: a scene the survey did not see can still make its expert use both arms. Changing the list, the ids or the codes is a spec_version bump. `max_steps` are per-skill caps; each task carries its own smaller limit from RoboTwin.",
+ "_skills_comment": "The skills are the three categories of the benchmark's surveyed `franka_1arm` suite (robotwin_bench/tasks.yml, now robotensor_bench/tasks.yml, and docs/results/survey-franka-1arm.json in robotensor/RoboTwin-Vector at 98a7ffd): pick_and_place is place_empty_cup, stacking is stack_bowls_two, press_push is click_bell and press_stapler. The survey was small, 6 tasks x 3 seeds on a dual Franka, keeping a task whose expert solved at least 2 of 3 seeds with one arm. Stacking has no one-arm task, so stack_bowls_two, whose expert may switch arms, stands in: a scene the survey did not see can still make its expert use both arms. Changing the list, the ids or the codes is a spec_version bump. `max_steps` are per-skill caps; each task carries its own smaller limit from RoboTwin.",
  "duel": {
   "default_size": "smoke",
   "sizes": {

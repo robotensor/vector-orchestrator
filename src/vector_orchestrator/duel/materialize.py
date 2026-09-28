@@ -43,7 +43,13 @@ from pathlib import Path
 from typing import Any
 
 from ..benchmarks.api import DEMONSTRATION_CLIP, PROMPT_FILE, RESULT_FILE
-from ..benchmarks.subprocess_runner import benchmark_environment, outcome_from, run_argv
+from ..benchmarks.subprocess_runner import (
+    benchmark_environment,
+    in_workdir,
+    outcome_from,
+    run_argv,
+    workdir_of,
+)
 from ..canon import sha256_file
 from .orphans import Ledger, reap_ledger
 
@@ -357,11 +363,12 @@ def materialize_unit(
         left = timeout_s - (time.monotonic() - started)
         done = run_argv(
             argv,
-            env=env,
+            env=in_workdir(env, workdir_of(benchmark)),
             timeout_s=max(left, 0.0),
             log_path=out_dir / LOG_FILE,
             ledger=Ledger(out_dir),
             stall_s=stall_s,
+            cwd=workdir_of(benchmark),
         )
         if not done.stalled or attempt >= stall_retries:
             break

@@ -231,7 +231,7 @@ def _publish(store, spec, record, *, units, prompts, size, started_at, wall, sid
         "max_void_fraction": spec.max_void_fraction(TRACK),
     }
     event["benchmarks"] = {
-        name: {"info": {"id": name}, "pin": spec.benchmark_pin(name), "installed_version": None}
+        name: {"info": {"id": name}, "pin": spec.benchmark_pin(name)}
         for name in spec.benchmarks_of(TRACK)
     }
     store.write_event(TRACK, event)

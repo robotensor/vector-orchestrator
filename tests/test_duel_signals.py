@@ -99,7 +99,7 @@ def start_duel(spec, tmp_path: Path, slow: Path) -> subprocess.Popen:
     root, key = tmp_path / "store", tmp_path / "keys" / "orchestrator.ed25519"
     assert main(["--spec", str(spec.path), "store", "init", str(root), "--key", str(key)]) == 0
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(FAKE_SITE), *sys.path])}
-    argv = [sys.executable, "-m", "vector_orchestrator", *duel_args(spec, tmp_path, slow)]
+    argv = [sys.executable, "-m", "vector_fake_cli", *duel_args(spec, tmp_path, slow)]
     log = open(tmp_path / "duel.log", "wb")  # noqa: SIM115 - the child writes it until it exits
     return subprocess.Popen(argv, env=env, stdout=log, stderr=subprocess.STDOUT, cwd=tmp_path)
 

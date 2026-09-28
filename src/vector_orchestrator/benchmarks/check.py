@@ -1,20 +1,21 @@
 """`vector-orchestrator benchmarks check <id>`: can this host run that benchmark for the spec?
 
-The deploy check. It goes as far as it can without a simulator: the pin, the import, the ABI's
-shape, `info`, the catalogue against the skills that name the benchmark, derivation (twice, since it
-must be a pure function) and both command builders. It never runs a command - that needs the
-simulator - and it reports every problem at once rather than stopping at the first.
+The deploy check. It goes as far as it can without building a scene: the checkout and its
+interpreter, the pin, the driver's shape, the checkout's own answers (its task table, and each
+suite's task config with the harness it reports, which needs the assets), `info`, the catalogue
+against the skills that name the benchmark, derivation (twice, since it must be a pure function)
+and both command builders. It never runs a unit, and it reports every problem at once rather than
+stopping at the first.
 """
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from .api import BENCHMARK_API_VERSION, PROMPT_FILE
-from .plugins import SIMULATOR_MODULES, discover
+from .drivers import discover
 from .units import DerivationError, check_unit
 
 #: The environment variable name `check` hands `run_command`. Only a name: no key exists here.
@@ -45,17 +46,16 @@ class CheckReport:
 
 def check_benchmark(spec: Any, name: str) -> CheckReport:
     report = CheckReport(name=name)
-    plugged = discover(spec, load=(name,)).get(name)
-    if plugged is None:
-        report.problems.append("not declared in spec.json `benchmarks` and not installed")
+    found = discover(spec, prepare=(name,)).get(name)
+    if found is None:
+        report.problems.append("not declared in spec.json `benchmarks`")
         return report
-    report.problems.extend(plugged.problems)
-    report.notes.extend(plugged.notes)
-    if not plugged.ok:
+    report.problems.extend(found.problems)
+    report.notes.extend(found.notes)
+    if not found.ok:
         return report
 
-    benchmark = plugged.benchmark
-    before = set(sys.modules)
+    benchmark = found.benchmark
     _check_info(report, benchmark)
     catalogue = _call(report, "catalogue", benchmark.catalogue)
     if catalogue is RAISED:
@@ -69,10 +69,6 @@ def check_benchmark(spec: Any, name: str) -> CheckReport:
         report.notes.append("no skill in spec.json runs on it")
     for skill in skills:
         _check_skill(report, spec, benchmark, skill, catalogue)
-
-    leaked = sorted({m.split(".")[0] for m in set(sys.modules) - before} & SIMULATOR_MODULES)
-    if leaked:
-        report.problems.append(f"calling its pure methods imported {', '.join(leaked)}")
     return report
 
 

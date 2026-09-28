@@ -1,0 +1,213 @@
+{
+  "categories": {
+    "articulated": "Articulated Manipulation",
+    "bimanual": "Bimanual Manipulation",
+    "insertion": "Insertion",
+    "open_close": "Open / Close",
+    "pick_and_place": "Pick and Place",
+    "press_push": "Press / Push",
+    "stacking": "Stacking"
+  },
+  "tasks": {
+    "adjust_bottle": {
+      "arms": "1",
+      "category": "articulated"
+    },
+    "beat_block_hammer": {
+      "arms": "1",
+      "category": "press_push"
+    },
+    "blocks_ranking_rgb": {
+      "arms": "switching",
+      "category": "stacking"
+    },
+    "blocks_ranking_size": {
+      "arms": "switching",
+      "category": "stacking"
+    },
+    "click_alarmclock": {
+      "arms": "1",
+      "category": "press_push"
+    },
+    "click_bell": {
+      "arms": "1",
+      "category": "press_push"
+    },
+    "dump_bin_bigbin": {
+      "arms": "2",
+      "category": "pick_and_place"
+    },
+    "grab_roller": {
+      "arms": "2",
+      "category": "bimanual"
+    },
+    "handover_block": {
+      "arms": "2",
+      "category": "bimanual"
+    },
+    "handover_mic": {
+      "arms": "2",
+      "category": "bimanual"
+    },
+    "hanging_mug": {
+      "arms": "2",
+      "category": "insertion"
+    },
+    "lift_pot": {
+      "arms": "2",
+      "category": "bimanual"
+    },
+    "move_can_pot": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "move_pillbottle_pad": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "move_playingcard_away": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "move_stapler_pad": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "open_laptop": {
+      "arms": "1",
+      "category": "open_close"
+    },
+    "open_microwave": {
+      "arms": "1",
+      "category": "open_close"
+    },
+    "pick_diverse_bottles": {
+      "arms": "2",
+      "category": "bimanual"
+    },
+    "pick_dual_bottles": {
+      "arms": "2",
+      "category": "bimanual"
+    },
+    "place_a2b_left": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "place_a2b_right": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "place_bread_basket": {
+      "arms": "2",
+      "category": "pick_and_place"
+    },
+    "place_bread_skillet": {
+      "arms": "2",
+      "category": "pick_and_place"
+    },
+    "place_burger_fries": {
+      "arms": "2",
+      "category": "pick_and_place"
+    },
+    "place_can_basket": {
+      "arms": "2",
+      "category": "pick_and_place"
+    },
+    "place_cans_plasticbox": {
+      "arms": "2",
+      "category": "pick_and_place"
+    },
+    "place_container_plate": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "place_dual_shoes": {
+      "arms": "2",
+      "category": "pick_and_place"
+    },
+    "place_empty_cup": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "place_fan": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "place_mouse_pad": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "place_object_basket": {
+      "arms": "2",
+      "category": "pick_and_place"
+    },
+    "place_object_scale": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "place_object_stand": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "place_phone_stand": {
+      "arms": "1",
+      "category": "insertion"
+    },
+    "place_shoe": {
+      "arms": "1",
+      "category": "pick_and_place"
+    },
+    "press_stapler": {
+      "arms": "1",
+      "category": "press_push"
+    },
+    "put_bottles_dustbin": {
+      "arms": "2",
+      "category": "pick_and_place"
+    },
+    "put_object_cabinet": {
+      "arms": "2",
+      "category": "open_close"
+    },
+    "rotate_qrcode": {
+      "arms": "1",
+      "category": "articulated"
+    },
+    "scan_object": {
+      "arms": "2",
+      "category": "articulated"
+    },
+    "shake_bottle": {
+      "arms": "1",
+      "category": "articulated"
+    },
+    "shake_bottle_horizontally": {
+      "arms": "1",
+      "category": "articulated"
+    },
+    "stack_blocks_three": {
+      "arms": "switching",
+      "category": "stacking"
+    },
+    "stack_blocks_two": {
+      "arms": "switching",
+      "category": "stacking"
+    },
+    "stack_bowls_three": {
+      "arms": "switching",
+      "category": "stacking"
+    },
+    "stack_bowls_two": {
+      "arms": "switching",
+      "category": "stacking"
+    },
+    "stamp_seal": {
+      "arms": "1",
+      "category": "press_push"
+    },
+    "turn_switch": {
+      "arms": "1",
+      "category": "press_push"
+    }
+  }
+}

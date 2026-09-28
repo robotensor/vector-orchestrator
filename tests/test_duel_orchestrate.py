@@ -132,7 +132,7 @@ def test_the_replay_challenger_dethrones_the_zero_king_on_identical_prompts(
     assert event["duel_id"] == req.duel_id(duel_spec) and event["units_per_skill"] == 1
     assert event["wall_seconds"] > 0 and event["runtime"] == "local"
     assert event["benchmarks"]["fake"]["info"]["id"] == "fake"
-    assert event["benchmarks"]["fake"]["pin"]["distribution"] == "vector-fake-benchmark"
+    assert event["benchmarks"]["fake"]["pin"]["repo"] == "robotensor/fake-benchmark"
     for side, ref in (("challenger", REPLAY_REF), ("king", ZERO_REF)):
         assert event["sides"][side]["commit"] == ref.revision
         assert "base_image_digest" in event["sides"][side]

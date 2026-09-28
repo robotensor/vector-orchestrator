@@ -1,7 +1,7 @@
 """A duel's unit list, from the benchmarks behind its track's skills.
 
-Only the benchmark knows what one of its units *is* - a task, a scene seed, an embodiment - so the
-ABI puts `derive_units` on the plugin and this module calls it. Two things the orchestrator keeps
+What one of a benchmark's units *is* - a task, a scene seed, an embodiment - is its driver's to say,
+so `derive_units` is on the benchmark and this module calls it. Two things the orchestrator keeps
 for itself, because they are the competition's and not the benchmark's:
 
 - **The identity of a unit.** `unit_id` is `<skill code>-<index>`, indexed across the whole track,
@@ -54,11 +54,11 @@ def plugin_units(
     """Every unit of one duel: skills in spec order, units in the order each benchmark returned
     them, so the list is a pure function of `(spec, track, duel_id, size, entropy)`.
 
-    `resolve` maps a benchmark name to its plugin object; by default the pinned, installed plugin.
+    `resolve` maps a benchmark name to its benchmark; by default the one `drivers.load` finds.
     `entropy` is the chain entropy the duel was fought under (`seed_key`), None for none.
     """
     if resolve is None:
-        from .plugins import load
+        from .drivers import load
 
         def resolve(name: str) -> Any:
             return load(spec, name)

@@ -1,34 +1,38 @@
-"""`vector-orchestrator benchmarks list|check`, against the fake benchmark installed for real."""
+"""`vector-orchestrator benchmarks list|check`, against the fake benchmark registered as a driver."""
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import subprocess
 import sys
-import sysconfig
-from pathlib import Path
 
 import pytest
 
-from conftest import FAKE_PIN, FAKE_SITE, fake_spec_doc
+from conftest import FAKE_SITE
+from vector_orchestrator.benchmarks import drivers, robotwin
 from vector_orchestrator.benchmarks.check import check_benchmark
 from vector_orchestrator.cli import main
 
 
-def script() -> str:
-    path = Path(sysconfig.get_path("scripts")) / "vector-orchestrator"
-    assert path.exists(), "install the package (pip install -e .) for the console script"
-    return str(path)
+def register(monkeypatch, body: str, *, imports: str = "") -> None:
+    """Register a subclass of the fake benchmark, `body` its class body, as the `fake` driver."""
+    monkeypatch.syspath_prepend(str(FAKE_SITE))
+    fake = importlib.import_module("vector_fake_benchmark")
+    namespace: dict = {"Base": fake.FakeBenchmark}
+    exec(f"{imports}class Variant(Base):\n{body}", namespace)
+    variant = namespace["Variant"]()
+    monkeypatch.setitem(drivers.DRIVERS, "fake", lambda pin: variant)
 
 
-def test_the_console_script_checks_the_fake_benchmark_with_no_problems(fake_spec):
-    env = {**os.environ, "PYTHONPATH": str(FAKE_SITE)}
+def test_the_orchestrators_command_line_checks_the_fake_benchmark_with_no_problems(fake_spec):
     done = subprocess.run(
-        [script(), "--spec", str(fake_spec.path), "benchmarks", "check", "fake"],
+        [sys.executable, "-m", "vector_fake_cli", "--spec", str(fake_spec.path)]
+        + ["benchmarks", "check", "fake"],
         capture_output=True,
         text=True,
-        env=env,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join([str(FAKE_SITE), *sys.path])},
     )
     assert done.returncode == 0, done.stdout + done.stderr
     assert "problem:" not in done.stdout
@@ -37,43 +41,24 @@ def test_the_console_script_checks_the_fake_benchmark_with_no_problems(fake_spec
 
 def test_check_reports_the_fake_benchmark_clean(fake_installed, fake_spec):
     report = check_benchmark(fake_spec, "fake")
-    assert report.problems == []
+    assert report.problems == [] and report.notes == []
     assert report.info["embodiment"][:2] == ["franka-panda", "franka-panda"]
-    assert "wheel sha256 not pinned in spec.json yet" in report.notes
 
 
-def test_list_names_every_benchmark_without_importing_one(fake_installed, fake_spec, capsys):
+def test_list_names_every_declared_benchmark_and_where_it_runs(fake_installed, fake_spec, capsys):
     assert main(["--spec", str(fake_spec.path), "benchmarks", "list", "--json"]) == 0
     rows = json.loads(capsys.readouterr().out)
-    assert [(r["name"], r["distribution"], r["loaded"]) for r in rows] == [
-        ("fake", "vector-fake-benchmark", False)
+    assert [(r["name"], r["found"], r["workdir"], r["problems"]) for r in rows] == [
+        ("fake", True, None, [])
     ]
-    assert "vector_fake_benchmark" not in sys.modules
+    assert rows[0]["pin"]["module"] == "vector_fake_benchmark.command"
 
 
-def test_check_refuses_another_api_version_with_the_reason(
-    install_distribution, spec_doc, write_spec, capsys
-):
-    install_distribution(
-        "vector-variant-benchmark",
-        entry_points={"fake": "vector_variant_v2"},
-        modules={
-            "vector_variant_v2": (
-                "import importlib.util\n"
-                "s = importlib.util.spec_from_file_location("
-                f"'vector_variant_base', {str(FAKE_SITE / 'vector_fake_benchmark' / '__init__.py')!r})\n"
-                "m = importlib.util.module_from_spec(s); s.loader.exec_module(m)\n"
-                "class V2(m.FakeBenchmark):\n    api_version = 2\n"
-                "BENCHMARK = V2()\n"
-            )
-        },
-    )
-    spec = write_spec(
-        fake_spec_doc(spec_doc, {**FAKE_PIN, "distribution": "vector-variant-benchmark"})
-    )
-    assert main(["--spec", str(spec.path), "benchmarks", "check", "fake"]) == 1
+def test_check_refuses_another_api_version_with_the_reason(fake_spec, monkeypatch, capsys):
+    register(monkeypatch, "    api_version = 1\n")
+    assert main(["--spec", str(fake_spec.path), "benchmarks", "check", "fake"]) == 1
     out = capsys.readouterr().out
-    assert "problem: api_version: speaks 2, this orchestrator speaks 1" in out
+    assert "problem: api_version: speaks 1, this orchestrator speaks 2" in out
     assert out.strip().endswith("fake: REFUSED")
 
 
@@ -96,10 +81,6 @@ def test_check_refuses_another_api_version_with_the_reason(
             "    def run_command(self, **kw):\n        return 'bench run'\n",
             "franka_pick_and_place: run_command: expected a non-empty list of strings",
         ),
-        (
-            "    def info(self):\n        return {'id': 'fake', 'api_version': 1, 'x': __import__('mujoco')}\n",
-            "calling its pure methods imported mujoco",
-        ),
         # A stub that returns nothing is as broken as one that raises.
         ("    def info(self):\n        pass\n", "info: returned NoneType, not a mapping"),
         ("    def catalogue(self):\n        pass\n", "catalogue: returned NoneType, not a mapping"),
@@ -118,66 +99,36 @@ def test_check_refuses_another_api_version_with_the_reason(
     ],
 )
 def test_check_catches_a_benchmark_that_would_fail_a_duel(
-    install_distribution, spec_doc, write_spec, mutation, problem
+    fake_spec, monkeypatch, mutation, problem
 ):
-    install_distribution(
-        "vector-variant-benchmark",
-        entry_points={"fake": "vector_variant_mutant"},
-        modules={
-            "vector_variant_mutant": (
-                "import importlib.util\n"
-                "s = importlib.util.spec_from_file_location("
-                f"'vector_variant_base', {str(FAKE_SITE / 'vector_fake_benchmark' / '__init__.py')!r})\n"
-                "m = importlib.util.module_from_spec(s); s.loader.exec_module(m)\n"
-                "class Mutant(m.FakeBenchmark):\n" + mutation + "BENCHMARK = Mutant()\n"
-            ),
-            "mujoco": "NAME = 'stand-in'\n",
-        },
-    )
-    spec = write_spec(
-        fake_spec_doc(spec_doc, {**FAKE_PIN, "distribution": "vector-variant-benchmark"})
-    )
-    try:
-        report = check_benchmark(spec, "fake")
-    finally:
-        sys.modules.pop("mujoco", None)
+    register(monkeypatch, mutation)
+    report = check_benchmark(fake_spec, "fake")
     assert any(p.startswith(problem) for p in report.problems), report.problems
 
 
-def test_check_hands_run_command_an_address_in_the_wire_form(
-    install_distribution, spec_doc, write_spec
+def test_check_hands_run_command_an_address_in_the_wire_form(fake_spec, monkeypatch):
+    """The policy wire listens on a Unix socket path or host:port (vector_policy.wire), so a
+    benchmark that follows the contract and checks the address must pass `check`, not be failed by
+    a URL."""
+    register(
+        monkeypatch,
+        "    def run_command(self, *, policy_address, **kw):\n"
+        "        host, _, port = policy_address.rpartition(':')\n"
+        "        if not (os.path.isabs(policy_address) or (host and port.isdigit())):\n"
+        "            raise ValueError(f'{policy_address!r} is not a socket path or host:port')\n"
+        "        return super().run_command(policy_address=policy_address, **kw)\n",
+        imports="import os\n",
+    )
+    assert check_benchmark(fake_spec, "fake").problems == []
+
+
+def test_check_on_the_shipped_spec_says_where_robotwins_checkout_must_be_named(
+    spec, monkeypatch, capsys
 ):
-    """The policy wire listens on a Unix socket path or host:port (vector_policy.wire), so a plugin
-    that follows the contract and checks the address must pass `check`, not be failed by a URL."""
-    install_distribution(
-        "vector-variant-benchmark",
-        entry_points={"fake": "vector_variant_strict"},
-        modules={
-            "vector_variant_strict": (
-                "import importlib.util, os\n"
-                "s = importlib.util.spec_from_file_location("
-                f"'vector_variant_base', {str(FAKE_SITE / 'vector_fake_benchmark' / '__init__.py')!r})\n"
-                "m = importlib.util.module_from_spec(s); s.loader.exec_module(m)\n"
-                "class Strict(m.FakeBenchmark):\n"
-                "    def run_command(self, *, policy_address, **kw):\n"
-                "        host, _, port = policy_address.rpartition(':')\n"
-                "        if not (os.path.isabs(policy_address) or (host and port.isdigit())):\n"
-                "            raise ValueError(f'{policy_address!r} is not a socket path or host:port')\n"
-                "        return super().run_command(policy_address=policy_address, **kw)\n"
-                "BENCHMARK = Strict()\n"
-            )
-        },
-    )
-    spec = write_spec(
-        fake_spec_doc(spec_doc, {**FAKE_PIN, "distribution": "vector-variant-benchmark"})
-    )
-    assert check_benchmark(spec, "fake").problems == []
-
-
-def test_check_on_the_shipped_spec_says_robotwin_is_not_installed(spec, capsys):
+    monkeypatch.delenv(robotwin.ROOT_ENV, raising=False)
     assert main(["benchmarks", "check", "robotwin"]) == 1
     out = capsys.readouterr().out
-    assert "problem: not installed: install robotensor-benchmark-robotwin" in out
+    assert "problem: $ROBOTWIN_BENCH_ROOT is not set" in out
 
 
 def test_python_dash_m_runs_the_same_cli(fake_spec):

@@ -1,11 +1,11 @@
-"""A fake benchmark, packaged the way a real one is: its own distribution, found by entry point.
+"""A fake benchmark, standing where a driver stands: registered as `fake` in the drivers.
 
 The pure half below imports the standard library, and numpy inside `verify_prompt` to read a
 prompt. The command half is `command.py`, a small script run as a subprocess, which imports
 `vector_fake_simulator` - a stand-in for SAPIEN - so a test can check that loading and calling the
 plugin never loads the "simulator".
 
-It never imports `vector_orchestrator`, as the ABI requires of every benchmark.
+It never imports `vector_orchestrator`: the orchestrator checks it structurally.
 
 `run_command` reads the unit's `fake_behaviour` (default `policy`: drive the served policy) so a
 test can make a unit fail, crash, hang or write nothing, the ways a real benchmark subprocess goes
@@ -56,7 +56,9 @@ def candidate_seeds(unit: Any) -> list[int]:
 
 class FakeBenchmark:
     id = "fake"
-    api_version = 1
+    api_version = 2
+    #: What the spec pins as `benchmarks.fake.module`.
+    module = "vector_fake_benchmark.command"
 
     def info(self) -> dict[str, Any]:
         return {

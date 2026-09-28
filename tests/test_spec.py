@@ -2,8 +2,8 @@ import pytest
 
 from vector_orchestrator.spec import SpecError, load_schema, validate_spec
 
-#: The categories in robotensor/RoboTwin-Vector `bench/src/robotwin_bench/tasks.yml`. A skill's
-#: category is passed to the benchmark's `derive_units`, so a typo would derive nothing.
+#: The categories in robotensor/RoboTwin-Vector `robotensor_bench/tasks.yml`. A skill's category is
+#: passed to the benchmark's `derive_units`, so a typo would derive nothing.
 ROBOTWIN_CATEGORIES = {
     "pick_and_place",
     "stacking",
@@ -26,7 +26,9 @@ def test_the_shipped_contract_is_one_franka_track_on_robotwin(spec, track):
         assert spec.category(skill) in ROBOTWIN_CATEGORIES
         assert spec.env(skill)["embodiment"][:2] == ["franka-panda", "franka-panda"]
         assert spec.env(skill)["action_dims"] == {"qpos": 16, "ee": 16}
-    assert spec.benchmark_pin("robotwin")["distribution"] == "robotensor-benchmark-robotwin"
+    pin = spec.benchmark_pin("robotwin")
+    assert pin["repo"] == "robotensor/RoboTwin-Vector" and pin["branch"] == "vector"
+    assert pin["module"] == "robotensor_bench.cli" and pin["api_version"] == 2
     assert "PROVISIONAL" not in spec.raw["_skills_comment"]
     assert "surveyed `franka_1arm` suite" in spec.raw["_skills_comment"]
     assert spec.units_per_side(track, "smoke") == 3 * spec.units_per_skill(track, "smoke")
@@ -107,11 +109,18 @@ def test_validate_rejects_bad_specs(spec_doc, write_spec):
         lambda d: d["skills"]["franka_stacking"].update(architecture="anything")
     )
     assert any("model removed" in e for e in errors_after(lambda d: d.update(model={})))
-    assert "benchmarks.robotwin.api_version == 1" in errors_after(
-        lambda d: d["benchmarks"]["robotwin"].update(api_version=2)
+    assert "benchmarks.robotwin.api_version == 2" in errors_after(
+        lambda d: d["benchmarks"]["robotwin"].update(api_version=1)
     )
-    assert "benchmarks.robotwin.wheel_sha256 hex64|null" in errors_after(
-        lambda d: d["benchmarks"]["robotwin"].update(wheel_sha256="abc")
+    assert any(
+        e.startswith("benchmarks.robotwin.wheel_sha256 removed: a benchmark is a checkout")
+        for e in errors_after(lambda d: d["benchmarks"]["robotwin"].update(wheel_sha256="abc"))
+    )
+    assert "benchmarks.robotwin.repo owner/name" in errors_after(
+        lambda d: d["benchmarks"]["robotwin"].update(repo="RoboTwin-Vector")
+    )
+    assert "benchmarks.robotwin.module dotted" in errors_after(
+        lambda d: d["benchmarks"]["robotwin"].update(module="robotensor_bench/cli.py")
     )
     assert "budgets.policy_budget_seconds>0" in errors_after(
         lambda d: d["budgets"].pop("policy_budget_seconds")

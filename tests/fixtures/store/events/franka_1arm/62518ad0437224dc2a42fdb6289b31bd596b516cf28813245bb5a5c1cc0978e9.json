@@ -4,14 +4,12 @@
       "info": {
         "id": "robotwin"
       },
-      "installed_version": null,
       "pin": {
-        "_comment": "Pinned by distribution, version and wheel sha256 once the wheel is built (robotensor/RoboTwin-Vector#86). Entry-point discovery imports code into the orchestrator, so the pin is checked from the installed distribution's metadata before anything is imported from it. null means not yet pinned, and `vector-orchestrator benchmarks check` says so.",
-        "api_version": 1,
-        "distribution": "robotensor-benchmark-robotwin",
-        "repo": "robotensor/RoboTwin-Vector",
-        "version": null,
-        "wheel_sha256": null
+        "_comment": "The RoboTwin fork with the level gate and the competition's harness in robotensor_bench/, branch vector. Run from its checkout, never installed: the orchestrator's driver runs `python -m robotensor_bench.cli` from the checkout this host names ($ROBOTWIN_BENCH_ROOT), under the simulator's interpreter ($ROBOTWIN_BENCH_PYTHON). api_version is the command line's contract; the driver checks the one the checkout reports (config check) and holds every command and result to the harness source it reports.",
+        "api_version": 2,
+        "branch": "vector",
+        "module": "robotensor_bench.cli",
+        "repo": "robotensor/RoboTwin-Vector"
       }
     }
   },
@@ -154,7 +152,7 @@
       "wall_seconds": 1800.0
     }
   },
-  "spec_fingerprint": "4d211da87d4a05bd40ddae0c15e7cc448fa76b06db10ef45a4cffa92bd712e4b",
+  "spec_fingerprint": "613ce945d466c352aa6bb3f1fdef5887f4e45d71941511e2a9ee508d48997175",
   "spec_version": 7,
   "started_at": "2026-09-13T10:00:00Z",
   "ties": 3,

@@ -22,10 +22,13 @@ def test_the_package_imports_no_simulator():
 PROBE = """
 import json, sys
 import vector_orchestrator.benchmarks
+import vector_fake_benchmark
+from vector_orchestrator.benchmarks import drivers
 from vector_orchestrator.benchmarks.check import check_benchmark
 from vector_orchestrator.benchmarks.units import plugin_units
 from vector_orchestrator.spec import load_spec_file
 
+drivers.DRIVERS["fake"] = lambda pin: vector_fake_benchmark.BENCHMARK
 spec = load_spec_file(sys.argv[1])
 report = check_benchmark(spec, "fake")
 units = plugin_units(spec, "franka_1arm", "d" * 64, "smoke")
@@ -38,8 +41,8 @@ print(json.dumps({
 
 
 def test_importing_and_driving_the_benchmarks_package_loads_no_simulator(fake_spec):
-    """With the fake benchmark installed, importing `vector_orchestrator.benchmarks`, loading the
-    plugin, checking it and deriving a duel's units - in a fresh interpreter - imports neither a
+    """With the fake benchmark registered, importing `vector_orchestrator.benchmarks`, finding the
+    benchmark, checking it and deriving a duel's units - in a fresh interpreter - imports neither a
     real simulator stack nor the fake benchmark's stand-in for one."""
     done = subprocess.run(
         [sys.executable, "-c", PROBE, str(fake_spec.path)],
@@ -50,7 +53,7 @@ def test_importing_and_driving_the_benchmarks_package_loads_no_simulator(fake_sp
     )
     probe = json.loads(done.stdout)
     assert probe["ok"] and probe["units"] == 3
-    assert "vector_fake_benchmark" in probe["modules"], "the plugin was not really loaded"
+    assert "vector_fake_benchmark" in probe["modules"], "the benchmark was not really driven"
     assert not set(probe["modules"]) & FORBIDDEN
 
 

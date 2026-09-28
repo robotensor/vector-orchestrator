@@ -33,6 +33,9 @@ TRACK_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 TRACK_CODE_RE = re.compile(r"^[a-z]{2}$")
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 BENCHMARK_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+#: A benchmark's repository, `owner/name`, and the module its checkout runs as `python -m`.
+REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+MODULE_RE = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 IMAGE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
@@ -315,17 +318,25 @@ def validate_spec(doc: dict[str, Any]) -> list[str]:
         if not isinstance(entry, dict):
             errors.append(f"benchmarks.{name}: mapping")
             continue
-        need(f"benchmarks.{name}.distribution", _text(entry.get("distribution")))
+        for gone in ("distribution", "version", "wheel_sha256"):
+            need(
+                f"benchmarks.{name}.{gone} removed: a benchmark is a checkout run from its "
+                "repository, pinned by repo, branch and module",
+                gone not in entry,
+            )
+        need(
+            f"benchmarks.{name}.repo owner/name",
+            _text(entry.get("repo")) and bool(REPO_RE.match(str(entry.get("repo")))),
+        )
+        branch = entry.get("branch")
+        need(f"benchmarks.{name}.branch str|null", branch is None or _text(branch))
+        need(
+            f"benchmarks.{name}.module dotted",
+            _text(entry.get("module")) and bool(MODULE_RE.match(str(entry.get("module")))),
+        )
         need(
             f"benchmarks.{name}.api_version == {BENCHMARK_API_VERSION}",
             entry.get("api_version") == BENCHMARK_API_VERSION,
-        )
-        version = entry.get("version")
-        need(f"benchmarks.{name}.version str|null", version is None or _text(version))
-        wheel = entry.get("wheel_sha256")
-        need(
-            f"benchmarks.{name}.wheel_sha256 hex64|null",
-            wheel is None or (isinstance(wheel, str) and bool(HEX64_RE.match(wheel))),
         )
 
     skills = doc.get("skills") or {}
@@ -602,7 +613,7 @@ class Spec:
         return str(self.skill(name)["title"])
 
     def benchmark_of(self, name: str) -> str:
-        """The benchmark (entry point name) a skill's units come from."""
+        """The benchmark (`benchmarks.<id>`) a skill's units come from."""
         return str(self.skill(name)["benchmark"])
 
     def suite(self, name: str) -> str:
@@ -621,7 +632,8 @@ class Spec:
     # -- benchmarks
     @property
     def benchmarks(self) -> dict[str, dict[str, Any]]:
-        """`benchmarks`: the pin each benchmark's distribution must match."""
+        """`benchmarks`: each benchmark's pin - its repository, branch, module and command-line
+        contract - which the checkout this host runs it from must match."""
         return {
             k: dict(v)
             for k, v in self.raw["benchmarks"].items()

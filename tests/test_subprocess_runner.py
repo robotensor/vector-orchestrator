@@ -330,6 +330,32 @@ def test_the_benchmark_is_given_robotwins_interpreter_and_denoiser_but_no_secret
     assert "ROBOTWIN_BENCH_DENOISER" not in runner.benchmark_environment(os.environ, AUTHKEY_ENV)
 
 
+def test_a_benchmark_run_from_its_checkout_runs_there_with_it_on_the_path(
+    fake, tmp_path, monkeypatch
+):
+    """A fork run from its checkout (`python -m robotensor_bench.cli`) is found only from its root:
+    the unit runs there, with the root first on PYTHONPATH and not the orchestrator's own."""
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    monkeypatch.setattr(type(fake), "workdir", str(checkout), raising=False)
+    monkeypatch.setenv("PYTHONPATH", "/the/orchestrators/own")
+    monkeypatch.setenv(AUTHKEY_ENV, AUTHKEY)
+    outcome = runner.run_unit(
+        fake,
+        unit(0),
+        prompt="/prompts/p.npz",
+        out_dir=tmp_path / "u",
+        policy_address="/tmp/vector-test-policy.sock",
+        authkey_env=AUTHKEY_ENV,
+        timeout_s=30,
+    )
+    assert not outcome.void, outcome.error
+    given = json.loads((tmp_path / "u" / "given.json").read_text())
+    assert given["cwd"] == str(checkout) and given["environ"]["PYTHONPATH"] == str(checkout)
+    assert runner.workdir_of(object()) is None
+    assert runner.in_workdir({"PATH": "/bin"}, None) == {"PATH": "/bin"}
+
+
 def test_a_unit_with_no_materialized_prompt_is_void_rather_than_run(fake, tmp_path):
     (outcome,) = run(fake, [unit(0, prompt="")], tmp_path)
     assert outcome.void and outcome.error == "fake: the unit carries no materialized prompt"
