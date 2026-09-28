@@ -19,7 +19,7 @@ from .drivers import discover
 from .units import DerivationError, check_unit
 
 #: The environment variable name `check` hands `run_command`. Only a name: no key exists here.
-CHECK_AUTHKEY_ENV = "VECTOR_POLICY_AUTHKEY"
+CHECK_AUTHKEY_ENV = "VECTOR_PROTOCOL_AUTHKEY"
 CHECK_ROOT = "/nonexistent/vector-orchestrator-check"
 
 
