@@ -6,10 +6,10 @@
                --mount type=bind,src=<dir>,dst=/run/vector
                --env HOME=/tmp/home --env TMPDIR=/tmp --env XDG_CACHE_HOME=/tmp/home/.cache
                --env TRITON_CACHE_DIR=... --env TORCHINDUCTOR_CACHE_DIR=...
-               --env TORCH_EXTENSIONS_DIR=... --env VECTOR_PROTOCOL_AUTHKEY <image>
+               --env TORCH_EXTENSIONS_DIR=... --env VECTOR_AUTHKEY <image>
                sh -c 'mkdir -p -m 0700 "$HOME" "$XDG_CACHE_HOME" && exec "$@"' sh
                python -m vector_protocol.serve --manifest /submission/policy.yaml
-                      --address /run/vector/policy.sock --authkey-env VECTOR_PROTOCOL_AUTHKEY
+                      --address /run/vector/policy.sock --authkey-env VECTOR_AUTHKEY
                       --log-file /run/vector/policy.log
 
 Every limit is the spec's, read here and nowhere else. `--memory-swap` equal to `--memory` means
@@ -67,7 +67,7 @@ from .errors import SubmissionError, SubmissionRejected
 from .image import SUBMISSION_DIR, sandbox_user
 
 #: The variable the authkey travels in. `benchmarks.check` hands `run_command` the same name.
-AUTHKEY_ENV = "VECTOR_PROTOCOL_AUTHKEY"
+AUTHKEY_ENV = "VECTOR_AUTHKEY"
 AUTHKEY_BYTES = 32
 #: The shared directory as the container sees it, and what the server puts there.
 SOCKET_DIR = "/run/vector"

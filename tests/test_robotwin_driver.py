@@ -174,7 +174,7 @@ def test_eval_run_plays_the_demonstration_directory_against_the_served_policy(
         prompt=str(tmp_path / "prompts" / "vl-000" / "prompt.npz"),
         out_dir=str(tmp_path / "challenger" / "vl-000"),
         policy_address="relative/policy.sock",
-        authkey_env="VECTOR_PROTOCOL_AUTHKEY",
+        authkey_env="VECTOR_AUTHKEY",
         act_timeout_s=60,
         policy_budget_s=1170.0,
         unit_timeout_s=1800.0,
@@ -184,7 +184,7 @@ def test_eval_run_plays_the_demonstration_directory_against_the_served_policy(
     assert argv[3:5] == ["eval", "run"]
     assert value_of(argv, "--demo") == str(tmp_path / "prompts" / "vl-000")
     assert value_of(argv, "--policy") == os.path.abspath("relative/policy.sock")
-    assert value_of(argv, "--authkey-env") == "VECTOR_PROTOCOL_AUTHKEY"
+    assert value_of(argv, "--authkey-env") == "VECTOR_AUTHKEY"
     assert (value_of(argv, "--act-timeout-s"), value_of(argv, "--unit-timeout-s")) == (
         "60.0",
         "1800.0",

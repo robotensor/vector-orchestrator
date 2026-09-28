@@ -607,12 +607,12 @@ def _add_duel_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--policy-python",
         default=(
-            os.environ.get("VECTOR_PROTOCOL_PYTHON")
+            os.environ.get("VECTOR_POLICY_PYTHON")
             or os.environ.get("ICIL_POLICY_PYTHON")  # what it was called before the rename
             or sys.executable
         ),
         help="the policy environment's interpreter (weights runtime; default "
-        "$VECTOR_PROTOCOL_PYTHON, else this one)",
+        "$VECTOR_POLICY_PYTHON, else this one)",
     )
     p.add_argument(
         "--workers",

@@ -51,7 +51,7 @@ from .runtime import (
 )
 
 #: The variable a served policy's key travels in, as in the sandbox.
-AUTHKEY_ENV = "VECTOR_PROTOCOL_AUTHKEY"
+AUTHKEY_ENV = "VECTOR_AUTHKEY"
 AUTHKEY_BYTES = 32
 SOCKET_FILE = "policy.sock"
 #: In the unit's directory once the unit is over: the server's log and what the policy printed.

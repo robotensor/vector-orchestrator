@@ -81,14 +81,14 @@ def test_the_docker_client_gets_the_allow_list_and_the_authkey_only_when_it_runs
     assert "HF_TOKEN" not in docker.environ and "VECTOR_LIVE_TOKEN" not in docker.environ
     assert docker.environ["DOCKER_HOST"] == "unix:///run/docker.sock"
 
-    docker.run(["--name", "vector-policy-env", "img"], env={"VECTOR_PROTOCOL_AUTHKEY": "ab" * 16})
+    docker.run(["--name", "vector-policy-env", "img"], env={"VECTOR_AUTHKEY": "ab" * 16})
     docker.image_id("img")
     ran = dict(line.split("=", 1) for line in (tmp_path / "env.run").read_text().splitlines())
     inspected = (tmp_path / "env.image").read_text()
     for secret in ("hf_publish_secret", "live_secret"):
         assert secret not in ran.values() and secret not in inspected
-    assert ran["VECTOR_PROTOCOL_AUTHKEY"] == "ab" * 16 and ran["DOCKER_HOST"] and ran["LC_ALL"]
-    assert "VECTOR_PROTOCOL_AUTHKEY" not in inspected, "the authkey is for the run it was given to"
+    assert ran["VECTOR_AUTHKEY"] == "ab" * 16 and ran["DOCKER_HOST"] and ran["LC_ALL"]
+    assert "VECTOR_AUTHKEY" not in inspected, "the authkey is for the run it was given to"
 
     # What is given explicitly is filtered the same way.
     given = Docker(
