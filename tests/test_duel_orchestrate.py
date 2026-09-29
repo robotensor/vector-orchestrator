@@ -16,7 +16,7 @@ from duel_helpers import (
     RecordingReporter,
     harness_voiding,
 )
-from store_helpers import make_record, publish
+from store_helpers import check_store, make_record, publish, schema_errors
 from submission_helpers import write_policy_repo
 from vector_orchestrator.benchmarks.units import plugin_units
 from vector_orchestrator.canon import Signer
@@ -32,8 +32,6 @@ from vector_orchestrator.duel.runtime import RuntimeUnavailable
 from vector_orchestrator.duel.side import read_results
 from vector_orchestrator.ids import SubmissionRef
 from vector_orchestrator.live import PHASES
-from vector_orchestrator.spec import load_schema
-from vector_orchestrator.store.verify import Report, SchemaCheck, verify_store
 from vector_orchestrator.store.writer import Store
 
 TRACK = "franka_1arm"
@@ -64,7 +62,7 @@ def orchestrator(spec, store, tmp_path, runtime=None, **kwargs):
 
 
 def verified(store, spec):
-    report = verify_store(store.root, spec, validator_key=store.signer.verify_key_hex)
+    report = check_store(store.root, spec)
     assert report.ok, report.errors
     return report
 
@@ -154,10 +152,8 @@ def test_the_replay_challenger_dethrones_the_zero_king_on_identical_prompts(
         and sides[-1] == "king"
         and "challenger" not in sides[sides.index("king") :]
     )
-    report = Report()
     for frame in live.frames:
-        SchemaCheck(load_schema()).check("LiveFrame", frame, "frame", report)
-    assert report.errors == []
+        assert schema_errors("LiveFrame", frame) == []
     assert live.frames[-1]["units"][0]["challenger_video"], "clips reach the live view"
 
 

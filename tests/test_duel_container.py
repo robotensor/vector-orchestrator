@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from duel_helpers import REPLAY, REPLAY_REF, ZERO, ZERO_REF
+from store_helpers import check_store
 from vector_orchestrator.cli import main
 from vector_orchestrator.duel.side import read_results
 from vector_orchestrator.ids import SubmissionRef
@@ -157,8 +158,8 @@ def test_a_smoke_duel_through_the_sandbox_publishes_the_replay_challenger_winnin
             assert recorded["base_image_digest"] == base.base.digest
             assert recorded["image"].startswith("sha256:") and recorded["runtime"] == "docker"
             assert recorded["image"] in {docker.image_id(tag) for tag in tags}
-        assert main([*spec, "store", "verify", str(root)]) == 0
-        assert capsys.readouterr().out.strip().endswith("OK")
+        report = check_store(root, duel_spec)
+        assert report.ok, report.errors
         assert set(duel_containers()) == before, "a duel's container outlived its unit"
 
         # Every container - the genesis's and the duel's, health checks and units - ran with the

@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vector_orchestrator.store.verify import verify_store
+from store_helpers import check_store
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 STORE = FIXTURES / "store"
@@ -32,10 +32,9 @@ def test_the_fixture_store_is_what_the_generator_writes_today(tmp_path):
     )
 
 
-def test_the_fixture_store_verifies_against_the_shipped_spec(spec):
-    report = verify_store(STORE, spec)
+def test_the_fixture_store_holds_together_under_the_shipped_spec(spec):
+    report = check_store(STORE, spec)
     assert report.ok, report.errors
-    assert report.warnings == []
     assert (report.records, report.events) == (2, 2)
 
 

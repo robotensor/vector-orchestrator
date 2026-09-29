@@ -23,7 +23,7 @@ from duel_helpers import (
     InspectingFakeDocker,
     RecordingReporter,
 )
-from store_helpers import make_record, publish
+from store_helpers import check_store, make_record, publish
 from submission_helpers import FAKE_BASE_DIGEST
 from vector_orchestrator.canon import Signer
 from vector_orchestrator.duel.docker_runtime import DockerPolicyRuntime
@@ -34,7 +34,6 @@ from vector_orchestrator.duel.runtime import (
     RuntimeUnavailable,
     SubmissionRefused,
 )
-from vector_orchestrator.store.verify import verify_store
 from vector_orchestrator.store.writer import Store
 from vector_orchestrator.submissions.container import AUTHKEY_ENV, Owner, run_argv
 from vector_orchestrator.submissions.docker import ContainerState
@@ -112,7 +111,7 @@ def test_a_duel_runs_through_the_sandbox_one_container_per_unit(
     assert isinstance(runtime, PolicyRuntime) and runtime.name == "docker"
     store, result = duel(spec, runtime, tmp_path)
     assert result.published and result.record["dethroned"], result.reason
-    assert verify_store(store.root, spec).ok
+    assert check_store(store.root, spec).ok
 
     event = store.event(TRACK, result.event_id)
     for side, directory in (("challenger", REPLAY), ("king", ZERO)):
@@ -194,7 +193,7 @@ def test_a_container_that_ends_by_its_own_doing_fails_its_unit(spec, docker, tmp
     assert (first["challenger_success"], first["void"]) == (False, False)
     assert said in first["challenger_error"]
     assert second["challenger_success"] is True and third["challenger_success"] is True
-    assert result.record["void"] == 0 and verify_store(store.root, spec).ok
+    assert result.record["void"] == 0 and check_store(store.root, spec).ok
 
 
 def test_a_container_whose_orchestrator_was_killed_is_reaped_and_a_live_ones_is_not(
@@ -313,4 +312,4 @@ def test_a_docker_inspect_that_times_out_voids_its_unit_and_never_undoes_a_score
     else:
         assert first["challenger_success"] is True, "a scored unit was undone"
     assert second["challenger_success"] is True and third["challenger_success"] is True
-    assert result.record["void"] == int(void) and verify_store(store.root, spec).ok
+    assert result.record["void"] == int(void) and check_store(store.root, spec).ok

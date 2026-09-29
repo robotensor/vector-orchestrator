@@ -51,8 +51,8 @@ def king_after(record: dict[str, Any], previous: dict | None) -> dict | None:
 
     Crowning is an allow-list: only a duel, a genesis, a succession or a vacancy can move it. Any
     other kind leaves it exactly as it was - it cannot take the crown, lose it, or blank it by
-    omission - and a kind added later cannot start doing so by accident. The writer's head and
-    `store verify` both go through here, so the head a reader checks is the head the writer meant.
+    omission - and a kind added later cannot start doing so by accident. `append` and
+    `rebuild_head` both go through here, so a rebuilt head is the head the writer meant.
     """
     kind = record.get("kind")
     if record.get("new_king") and kind in CROWNING:

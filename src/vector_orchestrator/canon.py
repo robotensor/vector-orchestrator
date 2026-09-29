@@ -5,8 +5,7 @@ contract: sorted keys, no whitespace, ASCII only, no NaN. A third party checks t
 against **the bytes of the line as published**, with the orchestrator's public key from
 `manifest.json` - never against a re-encoding of the parsed record. Numbers are formatted as Python
 formats them (`3.0` stays `3.0`, where `JSON.stringify` and RFC 8785 both give `3`), so a verifier
-in another language that re-encoded first would reject valid lines. `store verify` re-encodes only
-to check that this writer wrote the canonical form it signed.
+in another language that re-encoded first would reject valid lines.
 """
 
 from __future__ import annotations

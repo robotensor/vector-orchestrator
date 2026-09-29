@@ -18,15 +18,13 @@ from duel_helpers import (
     RecordingReporter,
     harness_voiding,
 )
-from store_helpers import make_record, publish
+from store_helpers import check_store, make_record, publish, schema_errors
 from vector_orchestrator.benchmarks.units import plugin_units
 from vector_orchestrator.canon import Signer
 from vector_orchestrator.daemon import Daemon
 from vector_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
 from vector_orchestrator.ids import SubmissionRef
 from vector_orchestrator.queue import Queues
-from vector_orchestrator.spec import load_schema
-from vector_orchestrator.store.verify import Report, SchemaCheck, verify_store
 from vector_orchestrator.store.writer import Store, store_lock
 
 TRACK = "franka_1arm"
@@ -86,10 +84,8 @@ def test_an_empty_throne_is_taken_by_genesis_then_the_next_entry_duels(
     assert state.entries == [] and state.in_progress is None and state.block == 2
 
     snapshot = json.loads(store.queue_path(TRACK).read_text())
-    report = Report()
-    SchemaCheck(load_schema()).check("QueueSnapshot", snapshot, "queue.json", report)
-    assert report.errors == []
-    assert verify_store(store.root, duel_spec).ok
+    assert schema_errors("QueueSnapshot", snapshot) == []
+    assert check_store(store.root, duel_spec).ok
 
 
 def test_a_killed_daemon_restarted_finishes_the_duel_running_each_unit_once_per_side(
@@ -120,7 +116,7 @@ def test_a_killed_daemon_restarted_finishes_the_duel_running_each_unit_once_per_
                 f"{side} {unit['unit_id']} ran {runs.count(chr(10))} times"
             )
     assert len(runtime.serves) == 2, "the restarted daemon re-ran finished units"
-    assert verify_store(store.root, duel_spec).ok
+    assert check_store(store.root, duel_spec).ok
 
 
 def test_a_resumed_duel_whose_king_lost_the_crown_requeues_its_challenger_and_never_publishes(
@@ -157,7 +153,7 @@ def test_a_resumed_duel_whose_king_lost_the_crown_requeues_its_challenger_and_ne
         (other.key, REPLAY_REF.key),
     ]
     assert records[2]["block"] == 4 and store.head(TRACK)["king"] == other.as_dict()
-    assert verify_store(store.root, duel_spec).ok
+    assert check_store(store.root, duel_spec).ok
 
 
 def test_a_duel_resumed_while_its_benchmark_is_missing_stays_in_progress_for_a_later_try(

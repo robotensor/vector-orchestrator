@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from duel_helpers import REPLAY, REPLAY_REF, ZERO, ZERO_REF
+from store_helpers import check_store
 from submission_helpers import FakeHub
 from vector_orchestrator.cli import main
 from vector_orchestrator.duel.side import read_results
@@ -136,7 +137,7 @@ def test_a_smoke_duel_publishes_every_unit_with_one_prompt_hash_for_both_sides(
     duel_spec, store, tmp_path, capsys
 ):
     """Acceptance: genesis on the empty track, then `duel --size smoke` publishes an event whose
-    units carry the prompt hash both sides ran from, and `store verify` passes."""
+    units carry the prompt hash both sides ran from, and the store holds together."""
     root, key = store
     zero = f"{ZERO_REF.repo}@{ZERO_REF.revision}"
     assert run(duel_spec, store, tmp_path, "duel", "--track", TRACK, "--challenger", zero) == 0
@@ -170,11 +171,10 @@ def test_a_smoke_duel_publishes_every_unit_with_one_prompt_hash_for_both_sides(
         assert sha and challenger[unit["unit_id"]]["prompt_sha256"] == sha
         assert king[unit["unit_id"]]["prompt_sha256"] == sha
 
-    validator = Store(root, duel_spec).manifest()["validator_key"]
-    verify = ["--spec", str(duel_spec.path), "store", "verify", str(root)]
-    assert main([*verify, "--validator-key", validator]) == 0
+    report = check_store(root, duel_spec)
+    assert report.ok, report.errors
     # Clips counted per record: the genesis's demonstration and rollout, the duel's three each.
-    assert capsys.readouterr().out.strip().endswith("records=2 events=2 media=15 OK")
+    assert (report.records, report.events, report.media) == (2, 2, 15)
 
 
 def test_the_daemon_serves_the_queue_once_per_step(duel_spec, store, hub, tmp_path, capsys):

@@ -5,10 +5,9 @@ import threading
 
 import pytest
 
+from store_helpers import schema_errors
 from vector_orchestrator.ids import SubmissionRef
 from vector_orchestrator.queue import Queue, Queues
-from vector_orchestrator.spec import load_schema
-from vector_orchestrator.store.verify import Report, SchemaCheck
 
 
 def test_queue_replace_moves_to_back_and_persists(tmp_path):
@@ -71,9 +70,7 @@ def test_the_snapshot_is_the_schema_4_shape_the_dashboard_reads(tmp_path):
     q.start("f" * 64, SubmissionRef.make("org/other", "4" * 40), now="2026-09-13T10:05:00Z")
     king = SubmissionRef.make("org/king", "5" * 40)
     snap = q.snapshot("franka_1arm", king, 4, now="2026-09-13T10:06:00Z")
-    report = Report()
-    SchemaCheck(load_schema()).check("QueueSnapshot", snap, "queue.json", report)
-    assert report.errors == []
+    assert schema_errors("QueueSnapshot", snap) == []
     assert snap["entries"][0] == {
         "position": 1,
         "key": SubmissionRef.make("org/policy", "3" * 40).key,

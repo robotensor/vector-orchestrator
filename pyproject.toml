@@ -11,13 +11,14 @@ description = "Orchestration layer of Robotensor Vector, the action-grounded in-
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-dependencies = ["pynacl>=1.5", "jsonschema>=4.20", "huggingface_hub>=1.0"]
+dependencies = ["pynacl>=1.5", "huggingface_hub>=1.0"]
 
 [project.scripts]
 vector-orchestrator = "vector_orchestrator.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff==0.16.7"]
+# jsonschema only for the tests, which hold every published file to store-schema.json.
+dev = ["pytest>=8", "ruff==0.16.7", "jsonschema>=4.20"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vector_orchestrator"]

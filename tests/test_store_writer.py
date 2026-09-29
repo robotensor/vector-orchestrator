@@ -4,11 +4,10 @@ import json
 
 import pytest
 
-from store_helpers import TRACK, make_record, publish, small_spec
+from store_helpers import TRACK, check_store, make_record, publish, small_spec
 from vector_orchestrator.canon import Signer, canonical_json, sha256_file, verify_signature
 from vector_orchestrator.ids import SubmissionRef
 from vector_orchestrator.store.records import unit_verdict_from_unit
-from vector_orchestrator.store.verify import verify_store
 from vector_orchestrator.store.writer import Store, store_lock
 
 KING = SubmissionRef.make("org/genesis", "a" * 40)
@@ -89,7 +88,7 @@ def test_a_crash_between_the_index_and_the_head_does_not_duplicate_a_seq(
     again = Store(store.root, spec, store.signer)
     assert publish(again, spec, make_record(again.spec, "duel", 2, KING, CHALLENGER)) == 3
     assert [r["seq"] for r in again.iter_index(TRACK)] == [1, 2, 3]
-    report = verify_store(store.root, spec)
+    report = check_store(store.root, spec)
     assert report.ok, report.errors
 
 
@@ -101,7 +100,7 @@ def test_a_torn_final_line_is_repaired_before_the_next_append(spec, tmp_path):
     with open(store.index_part_path(TRACK, 0), "a") as fh:
         fh.write('{"seq":2,"event_id":"ab')
     assert publish(store, spec, make_record(spec, "duel", 1, KING, CHALLENGER)) == 2
-    assert verify_store(store.root, spec).ok
+    assert check_store(store.root, spec).ok
 
 
 def test_a_complete_line_that_lost_its_newline_is_kept(spec, tmp_path):
@@ -111,7 +110,7 @@ def test_a_complete_line_that_lost_its_newline_is_kept(spec, tmp_path):
     path = store.index_part_path(TRACK, 0)
     path.write_bytes(path.read_bytes().rstrip(b"\n"))
     assert publish(store, spec, make_record(spec, "duel", 1, KING, CHALLENGER)) == 2
-    report = verify_store(store.root, spec)
+    report = check_store(store.root, spec)
     assert report.ok and report.records == 2, report.errors
 
 

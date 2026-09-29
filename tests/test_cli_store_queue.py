@@ -1,4 +1,4 @@
-"""`vector-orchestrator store init|verify` and `queue add|list|remove`, through the console script."""
+"""`vector-orchestrator store init` and `queue add|list|remove`, through the console script."""
 
 from __future__ import annotations
 
@@ -9,13 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from store_helpers import TRACK, make_record, publish
+from store_helpers import TRACK, check_store
 from submission_helpers import SHA_A, FakeHub
 from vector_orchestrator.canon import Signer
 from vector_orchestrator.cli import main
 from vector_orchestrator.ids import SubmissionRef
 from vector_orchestrator.queue import Queue
-from vector_orchestrator.store.writer import Store
 
 SHA_1, SHA_2 = "1" * 40, "2" * 40
 
@@ -35,7 +34,7 @@ def cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run([str(script), *args], capture_output=True, text=True, cwd=cwd)
 
 
-def test_store_init_then_verify_passes(tmp_path):
+def test_store_init_writes_the_manifest_and_a_head_per_track(tmp_path):
     root = tmp_path / "store"
     init = cli("store", "init", str(root), cwd=tmp_path)
     assert init.returncode == 0, init.stderr
@@ -44,63 +43,6 @@ def test_store_init_then_verify_passes(tmp_path):
     assert "generated signing key" in init.stderr and key.stat().st_mode & 0o777 == 0o600
     assert manifest["validator_key"] == Signer.from_file(key).verify_key_hex
     assert (root / "tracks" / TRACK / "head.json").exists()
-
-    verify = cli("store", "verify", str(root))
-    assert verify.returncode == 0, verify.stdout
-    assert verify.stdout.strip().splitlines()[-1] == "records=0 events=0 media=0 OK"
-
-
-def test_verify_names_the_index_line_a_changed_byte_broke(spec, tmp_path):
-    root, key = tmp_path / "store", tmp_path / "key"
-    assert cli("store", "init", str(root), "--key", str(key)).returncode == 0
-    store = Store(root, spec, Signer.from_file(key))
-    king = SubmissionRef.make("org/genesis", "a" * 40)
-    challenger = SubmissionRef.make("org/challenger", "b" * 40)
-    publish(store, spec, make_record(spec, "genesis", 0, king, None))
-    publish(store, spec, make_record(spec, "duel", 1, king, challenger))
-    assert cli("store", "verify", str(root)).returncode == 0
-
-    index = root / "tracks" / TRACK / "index-0000.jsonl"
-    data = bytearray(index.read_bytes())
-    second_line = data.index(b"\n") + 1
-    at = data.index(b'"block":1', second_line) + len('"block":')
-    data[at] = ord("8")
-    index.write_bytes(bytes(data))
-
-    verify = cli("store", "verify", str(root))
-    assert verify.returncode == 1
-    assert f"error: tracks/{TRACK}/index-0000.jsonl:2: bad signature" in verify.stdout
-    assert verify.stdout.strip().endswith("FAILED")
-
-    # A byte that is not UTF-8 is named the same way, not raised as a traceback.
-    data[at] = 0xFF
-    index.write_bytes(bytes(data))
-    verify = cli("store", "verify", str(root))
-    assert verify.returncode == 1 and "Traceback" not in verify.stderr, verify.stderr
-    assert f"error: tracks/{TRACK}/index-0000.jsonl:2: not UTF-8" in verify.stdout
-
-
-def test_verify_says_which_key_it_trusted_and_can_be_told_which_to_expect(spec, tmp_path):
-    """manifest.json is unsigned, so a store re-signed under another key is self-consistent; the
-    only way to know it is the competition's store is to pin the key."""
-    root, key = tmp_path / "store", tmp_path / "key"
-    assert cli("store", "init", str(root), "--key", str(key)).returncode == 0
-    store = Store(root, spec, Signer.from_file(key))
-    publish(
-        store, spec, make_record(spec, "genesis", 0, SubmissionRef.make("org/g", "a" * 40), None)
-    )
-    mine = Signer.from_file(key).verify_key_hex
-
-    ok = cli("store", "verify", str(root))
-    assert ok.returncode == 0 and f"validator_key: {mine}" in ok.stdout
-    pinned = cli("store", "verify", str(root), "--validator-key", mine)
-    assert pinned.returncode == 0
-
-    other = Signer.generate().verify_key_hex
-    wrong = cli("store", "verify", str(root), "--validator-key", other)
-    assert wrong.returncode == 1
-    assert f"error: manifest.json is signed by {mine}, not the expected {other}" in wrong.stdout
-    assert f"error: tracks/{TRACK}/index-0000.jsonl:1: bad signature" in wrong.stdout
 
 
 def test_init_refuses_to_resign_a_store_with_another_key(tmp_path):
@@ -161,7 +103,7 @@ def test_queue_add_list_remove_and_publish_the_snapshot(spec, hub, tmp_path, cap
     capsys.readouterr()
     snapshot = json.loads((root / "tracks" / TRACK / "queue.json").read_text())
     assert [e["repo"] for e in snapshot["entries"]] == ["org/other"]
-    assert main(["store", "verify", str(root)]) == 0
+    assert check_store(root, spec).ok
 
 
 def test_queue_add_waits_for_no_one_while_a_duel_holds_the_store(spec, hub, tmp_path, capsys):

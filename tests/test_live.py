@@ -20,9 +20,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
+from store_helpers import schema_errors
 from vector_orchestrator.live import PHASES, LiveReporter, build_frame
-from vector_orchestrator.spec import load_schema
-from vector_orchestrator.store.verify import Report, SchemaCheck
 
 # ---------------------------------------------------------------- the dashboard's rules
 
@@ -223,9 +222,7 @@ def test_prompts_are_materialized_between_checking_and_evaluating(spec):
     dashboard has to learn the phase; until it does, it refuses these frames and nothing else."""
     assert PHASES.index("checking") < PHASES.index("materializing") < PHASES.index("evaluating")
     built = frame(spec, phase="materializing", side=None, current=None, recent_media=None)
-    report = Report()
-    SchemaCheck(load_schema()).check("LiveFrame", built, "frame", report)
-    assert report.errors == []
+    assert schema_errors("LiveFrame", built) == []
     refused = parse_live_frame(built, spec.tracks, spec.skills(TRACK), 4)
     assert not refused["ok"] and "phase must be one of" in refused["reason"]
 
@@ -242,9 +239,7 @@ def test_the_frame_carries_progress_per_side_and_skill(spec):
     assert len(built["message"]) == 300
     # An outcome is only shown once both sides have run the unit.
     assert [u["outcome"] for u in built["units"]] == ["tie", None, None]
-    report = Report()
-    SchemaCheck(load_schema()).check("LiveFrame", built, "frame", report)
-    assert report.errors == []
+    assert schema_errors("LiveFrame", built) == []
 
 
 def test_a_large_unit_list_is_slimmed_to_fit_rather_than_refused(spec):
