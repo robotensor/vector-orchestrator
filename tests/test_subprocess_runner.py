@@ -387,7 +387,7 @@ def test_a_result_carrying_only_what_the_abi_requires_still_makes_an_outcome():
 
 def test_non_finite_numbers_in_a_result_never_stop_the_duel(fake, tmp_path):
     """JSON parsers accept NaN and Infinity; `int(nan)` raises. One such result must not lose the
-    units after it, nor carry a NaN on to a record that cannot be signed."""
+    units after it, nor carry a NaN on to a record canonical JSON cannot encode."""
 
     class NaN(type(fake)):
         def run_command(self, *, out_dir, **kw):
