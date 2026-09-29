@@ -6,8 +6,10 @@
     kwargs: {weights: /abs/path/model.safetensors, device: "cuda:0"}
 
 `reset(seed)` clears the episode and seeds the diffusion noise; `set_demonstration` encodes the
-prompt once; `act` answers one observation with one (16,) `ee` row, predicting HORIZON actions
-whenever the EXECUTED ones cached from the last prediction are used up.
+prompt once; `act` answers an observation with (k, 16) `ee` rows: it predicts HORIZON actions when
+the EXECUTED ones kept from the last prediction are used up, and returns all but the last
+HISTORY - 1 of them at once, then those one per call, so the harness observes (and renders) only
+the frames a prediction reads.
 """
 
 from __future__ import annotations
@@ -83,7 +85,13 @@ class VectorPolicy:
         self._history.append(demo.frame(observation))
         if not self._chunk:
             self._chunk.extend(self.predict()[:EXECUTED])
-        return {"action": demo.action_row(self._chunk.popleft())}
+        # The chunk goes back at once but for the last HISTORY - 1 actions, which go one per call:
+        # the harness renders an observation only per call, so it renders just the frames the next
+        # prediction reads - the one it is made on and the HISTORY - 1 steps before it - instead
+        # of every camera on every step. The actions are the ones a call per step would return.
+        count = max(1, len(self._chunk) - (HISTORY - 1))
+        rows = [demo.action_row(self._chunk.popleft()) for _ in range(count)]
+        return {"action": np.stack(rows)}
 
     def close(self) -> None:
         self._clear()
