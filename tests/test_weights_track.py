@@ -72,7 +72,11 @@ def test_a_code_spec_still_needs_its_sandbox_and_has_no_model(spec):
         (lambda d: d["duel"]["crown"].update(paired_test="t"), "duel.crown.paired_test"),
         (
             lambda d: d["baselines"].update(
-                vector_level1={"repo": "robotensor/vector-base", "revision": "0" * 40, "size": "huge"}
+                vector_level1={
+                    "repo": "robotensor/vector-base",
+                    "revision": "0" * 40,
+                    "size": "huge",
+                }
             ),
             "baselines.vector_level1.size",
         ),

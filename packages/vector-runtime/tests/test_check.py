@@ -157,8 +157,14 @@ def test_the_packaged_template_is_the_vector_architecture():
     # Vector's input format: three cameras and raw per-arm proprioception, two frames each.
     assert config["n_obs_steps"] == 2
     assert set(config["obs_horizons"]) == {
-        "head_rgb", "left_wrist_rgb", "right_wrist_rgb",
-        *(f"{arm}_{key}" for arm in ("left", "right") for key in ("ee_pos", "ee_ori", "gripper_states")),
+        "head_rgb",
+        "left_wrist_rgb",
+        "right_wrist_rgb",
+        *(
+            f"{arm}_{key}"
+            for arm in ("left", "right")
+            for key in ("ee_pos", "ee_ori", "gripper_states")
+        ),
     }
     assert config["dataset"]["_target_"].endswith(".RobotwinReplayImageDataset")
     assert config["model"]["obs_encoder"]["obs_encoder"]["obs_encoder"]["pretrained"] is True
