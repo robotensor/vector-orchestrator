@@ -49,7 +49,7 @@ def test_store_init_writes_the_manifest_and_a_head_per_track(spec, tmp_path):
 
 def test_queue_add_list_remove_and_publish_the_snapshot(spec, hub, tmp_path, capsys):
     queue, root = tmp_path / "queue", tmp_path / "store"
-    assert main(["store", "init", str(root), "--key", str(tmp_path / "k")]) == 0
+    assert main(["store", "init", str(root)]) == 0
     capsys.readouterr()
     base = ["queue", "--queue", str(queue), "--store", str(root)]
 
@@ -80,7 +80,7 @@ def test_queue_add_waits_for_no_one_while_a_duel_holds_the_store(spec, hub, tmp_
     from vector_orchestrator.store.writer import store_lock
 
     queue, root = tmp_path / "queue", tmp_path / "store"
-    assert main(["store", "init", str(root), "--key", str(tmp_path / "k")]) == 0
+    assert main(["store", "init", str(root)]) == 0
     capsys.readouterr()
     base = ["queue", "--queue", str(queue), "--store", str(root)]
     with store_lock(root):

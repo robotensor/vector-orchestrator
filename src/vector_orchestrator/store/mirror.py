@@ -20,9 +20,9 @@ REPO_OWNED = frozenset({".gitattributes", "README.md"})
 
 #: Exactly the store's layout (`store/writer.py`). Nothing else is uploaded: the mirror makes a
 #: dataset repository public, and a root that is not quite a store - an operator's working
-#: directory, which is where `store init` keeps the signing key by default - must not publish
-#: whatever else is in it. Dotfiles (the writer's locks) and half-written `.tmp` files are the
-#: store's own bookkeeping and are not part of what a reader verifies.
+#: directory - must not publish whatever else is in it. Dotfiles (the writer's locks) and
+#: half-written `.tmp` files are the store's own bookkeeping and are not part of what a reader
+#: reads.
 STORE_LAYOUT = re.compile(
     r"manifest\.json"
     r"|tracks/[^/]+/(?:head|queue)\.json"

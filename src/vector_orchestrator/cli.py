@@ -15,10 +15,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-#: Where `store init` keeps the signing key unless told otherwise. Never inside the store: the
-#: store is mirrored, and a key in it would be published.
-DEFAULT_KEY = "keys/orchestrator.ed25519"
-
 
 def _spec(args: argparse.Namespace):
     from .spec import load_spec
@@ -541,9 +537,6 @@ def _add_duel_args(p: argparse.ArgumentParser) -> None:
         help="where duels keep prompts, side results and logs, and resume from",
     )
     p.add_argument(
-        "--key", default=DEFAULT_KEY, help=f"the store's signing key (default: {DEFAULT_KEY})"
-    )
-    p.add_argument(
         "--runtime",
         choices=("docker", "local", "weights"),
         default="docker",
@@ -631,15 +624,10 @@ def build_parser() -> argparse.ArgumentParser:
     bm_check.add_argument("--json", action="store_true")
     bm.set_defaults(func=cmd_benchmarks)
 
-    st = sub.add_parser("store", help="the signed result store")
+    st = sub.add_parser("store", help="the result store")
     st_sub = st.add_subparsers(dest="store_cmd", required=True)
     st_init = st_sub.add_parser("init", help="write the manifest and an empty head per track")
     st_init.add_argument("root")
-    st_init.add_argument(
-        "--key",
-        default=DEFAULT_KEY,
-        help=f"ed25519 seed file, generated (0600) if absent (default: {DEFAULT_KEY})",
-    )
     st_mirror = st_sub.add_parser("mirror", help="push the store to a Hugging Face dataset repo")
     st_mirror.add_argument("root")
     st_mirror.add_argument("--repo", required=True, help="Hugging Face dataset repo owner/name")

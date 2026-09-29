@@ -58,13 +58,10 @@ def test_importing_and_driving_the_benchmarks_package_loads_no_simulator(fake_sp
 
 
 def test_the_local_state_a_run_writes_is_git_ignored():
-    """`store init` and `queue` write into the checkout by default; the signing key committed to a
-    public repository would let anyone forge the store's records."""
-    from vector_orchestrator.cli import DEFAULT_KEY
-
+    """`queue` writes into the checkout by default; its files are an operator's, not the
+    repository's."""
     root = Path(__file__).resolve().parents[1]
     ignored = {
         line.strip() for line in (root / ".gitignore").read_text().splitlines() if line.strip()
     }
-    assert f"/{DEFAULT_KEY.split('/')[0]}/" in ignored
     assert "/queue/" in ignored

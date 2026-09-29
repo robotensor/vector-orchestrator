@@ -98,9 +98,9 @@ def test_a_smoke_duel_through_the_sandbox_publishes_the_replay_challenger_winnin
     before = set(duel_containers())
     RecordingDocker.runs = []
     monkeypatch.setattr("vector_orchestrator.duel.docker_runtime.Docker", RecordingDocker)
-    root, key = tmp_path / "store", tmp_path / "keys" / "orchestrator.ed25519"
+    root = tmp_path / "store"
     spec = ["--spec", str(duel_spec.path)]
-    assert main([*spec, "store", "init", str(root), "--key", str(key)]) == 0
+    assert main([*spec, "store", "init", str(root)]) == 0
     capsys.readouterr()
     common = [
         "--track",
@@ -113,8 +113,6 @@ def test_a_smoke_duel_through_the_sandbox_publishes_the_replay_challenger_winnin
         str(tmp_path / "runs"),
         "--queue",
         str(tmp_path / "queue"),
-        "--key",
-        str(key),
         "--runtime",
         "docker",
         "--cache",

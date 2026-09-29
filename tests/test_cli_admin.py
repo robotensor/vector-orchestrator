@@ -30,7 +30,7 @@ def test_admin_serve_defaults_are_the_intake_defaults():
 
 def test_admin_serve_does_not_start_without_a_token_or_a_store(tmp_path, capsys, monkeypatch):
     store = tmp_path / "store"
-    assert main(["store", "init", str(store), "--key", str(tmp_path / "key")]) == 0
+    assert main(["store", "init", str(store)]) == 0
     capsys.readouterr()
     base = ["admin", "serve", "--store", str(store), "--queue", str(tmp_path / "queue")]
 
@@ -55,7 +55,7 @@ def test_admin_serve_does_not_start_without_a_token_or_a_store(tmp_path, capsys,
 
 def test_the_console_script_serves_health_on_loopback(tmp_path):
     store = tmp_path / "store"
-    assert main(["store", "init", str(store), "--key", str(tmp_path / "key")]) == 0
+    assert main(["store", "init", str(store)]) == 0
     script = Path(sysconfig.get_path("scripts")) / "vector-orchestrator"
     command = [str(script), "admin", "serve", "--store", str(store), "--port", "0"]
     proc = subprocess.Popen(

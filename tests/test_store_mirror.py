@@ -48,8 +48,8 @@ def store(spec, tmp_path):
 
 def test_mirror_lists_only_the_store_files(store):
     # Everything a wrong root might hold beside a store, all of it published if it were uploaded.
-    (store.root / "keys").mkdir()
-    (store.root / "keys" / "orchestrator.ed25519").write_text("00" * 32 + "\n")
+    (store.root / "runs").mkdir()
+    (store.root / "runs" / "duel.log").write_text("a run log\n")
     (store.root / "notes.md").write_text("scratch")
     (store.root / "events" / "franka_1arm").mkdir(parents=True)
     (store.root / "events" / "franka_1arm" / "abc123ff.json").write_text("{}")
@@ -65,8 +65,8 @@ def test_mirror_lists_only_the_store_files(store):
 
 
 def test_a_root_that_is_not_a_store_is_refused(tmp_path, api):
-    (tmp_path / "keys").mkdir()
-    (tmp_path / "keys" / "orchestrator.ed25519").write_text("00" * 32 + "\n")
+    (tmp_path / "runs").mkdir()
+    (tmp_path / "runs" / "duel.log").write_text("a run log\n")
     with pytest.raises(ValueError, match="holds no manifest.json"):
         mirror.mirror_store(tmp_path, "org/store")
     assert api.commits == []
@@ -84,8 +84,8 @@ def test_prune_deletes_stale_paths_but_keeps_the_repository_own_files(store, api
 
 
 def test_a_full_mirror_uploads_the_store_and_nothing_beside_it(store, api):
-    (store.root / "keys").mkdir()
-    (store.root / "keys" / "orchestrator.ed25519").write_text("00" * 32 + "\n")
+    (store.root / "runs").mkdir()
+    (store.root / "runs" / "duel.log").write_text("a run log\n")
     assert mirror.mirror_store(store.root, "org/store") == 2
     ((_, ops),) = api.commits
     assert sorted(op.path_in_repo for op in ops) == [

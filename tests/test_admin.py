@@ -39,7 +39,7 @@ def hub():
 @pytest.fixture
 def paths(tmp_path):
     store, queue = tmp_path / "store", tmp_path / "queue"
-    assert main(["store", "init", str(store), "--key", str(tmp_path / "key")]) == 0
+    assert main(["store", "init", str(store)]) == 0
     return store, queue
 
 

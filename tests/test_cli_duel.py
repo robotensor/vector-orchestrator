@@ -30,9 +30,9 @@ TRACK = "franka_1arm"
 
 @pytest.fixture
 def store(duel_spec, tmp_path, fake_installed):
-    root, key = tmp_path / "store", tmp_path / "keys" / "orchestrator.ed25519"
-    assert main(["--spec", str(duel_spec.path), "store", "init", str(root), "--key", str(key)]) == 0
-    return root, key
+    root = tmp_path / "store"
+    assert main(["--spec", str(duel_spec.path), "store", "init", str(root)]) == 0
+    return root
 
 
 @pytest.fixture
@@ -46,7 +46,7 @@ def hub(monkeypatch):
 
 
 def run(spec, store, tmp_path, command: str, *args: str, zero: Path = ZERO) -> int:
-    root, key = store
+    root = store
     return main(
         [
             "--spec",
@@ -58,8 +58,6 @@ def run(spec, store, tmp_path, command: str, *args: str, zero: Path = ZERO) -> i
             str(tmp_path / "runs"),
             "--queue",
             str(tmp_path / "queue"),
-            "--key",
-            str(key),
             "--runtime",
             "local",
             "--local",
@@ -89,7 +87,7 @@ def test_a_duel_by_hand_is_numbered_from_the_queue_and_never_shares_the_daemons_
     queue = ["--spec", str(duel_spec.path), "queue", "--queue", str(tmp_path / "queue")]
     assert main([*queue, "add", REPLAY_REF.repo, REPLAY_REF.revision]) == 0
     assert run(duel_spec, store, tmp_path, "daemon", "--once") == 0
-    records = Store(store[0], duel_spec).iter_index(TRACK)
+    records = Store(store, duel_spec).iter_index(TRACK)
     assert [(r["kind"], r["block"]) for r in records] == [("genesis", 1), ("duel", 3)]
     assert records[1]["event_id"][:16] != by_hand[0].name, "the daemon ran in the hand duel's run"
     assert (by_hand[0] / "failed.txt").is_file()
@@ -119,14 +117,14 @@ def test_the_duel_command_leaves_an_empty_throne_to_the_declared_baseline(
     spec = write_spec(doc, name="baseline.json")
     assert run(spec, store, tmp_path, "duel", "--challenger", REPLAY_AT) == 2
     assert f"track {TRACK} declares a baseline" in capsys.readouterr().err
-    assert Store(store[0], spec).iter_index(TRACK) == []
+    assert Store(store, spec).iter_index(TRACK) == []
     assert not (tmp_path / "runs" / TRACK).exists()
 
 
 def test_the_duel_command_refuses_while_a_daemon_holds_the_store(
     duel_spec, store, tmp_path, capsys
 ):
-    with store_lock(store[0]):
+    with store_lock(store):
         assert run(duel_spec, store, tmp_path, "duel", "--challenger", ZERO_AT) == 2
     assert "another orchestrator is publishing" in capsys.readouterr().err
     assert not (tmp_path / "runs").exists()
@@ -138,7 +136,7 @@ def test_a_smoke_duel_publishes_every_unit_with_one_prompt_hash_for_both_sides(
 ):
     """Acceptance: genesis on the empty track, then `duel --size smoke` publishes an event whose
     units carry the prompt hash both sides ran from, and the store holds together."""
-    root, key = store
+    root = store
     zero = f"{ZERO_REF.repo}@{ZERO_REF.revision}"
     assert run(duel_spec, store, tmp_path, "duel", "--track", TRACK, "--challenger", zero) == 0
     genesis = json.loads(capsys.readouterr().out)
@@ -178,7 +176,7 @@ def test_a_smoke_duel_publishes_every_unit_with_one_prompt_hash_for_both_sides(
 
 
 def test_the_daemon_serves_the_queue_once_per_step(duel_spec, store, hub, tmp_path, capsys):
-    root, _ = store
+    root = store
     queue = tmp_path / "queue"
     for ref in (ZERO_REF, REPLAY_REF):
         added = main(
@@ -239,7 +237,7 @@ def test_the_daemon_takes_what_its_intake_queues(
 ):
     """`daemon --admin`: a submission posted to the intake goes on the daemon's own queue, the loop
     takes it and crowns it on the empty track, and a signal stops the intake with the loop."""
-    root, _ = store
+    root = store
     caplog.set_level(logging.INFO, logger="vector_orchestrator.admin")
     hub.add(REPLAY_REF.repo, REPLAY_REF.revision, {"policy.yaml": 80}, "main")
     monkeypatch.setattr("vector_orchestrator.admin.HubApi", lambda: hub)
@@ -319,7 +317,7 @@ def test_the_daemon_takes_what_its_intake_queues(
 def test_the_daemons_intake_needs_its_token_and_stops_with_the_daemon(
     duel_spec, store, tmp_path, monkeypatch, capsys
 ):
-    root, _ = store
+    root = store
     port = free_port()
     daemon_once = ["daemon", "--once", "--admin", "--admin-port", str(port), *ADMIN]
     monkeypatch.delenv("VECTOR_TEST_ADMIN_TOKEN", raising=False)
@@ -355,7 +353,7 @@ def test_the_daemons_intake_defaults_are_the_intake_defaults():
 
 
 def test_what_the_duel_command_refuses(duel_spec, store, tmp_path, capsys):
-    root, key = store
+    root = store
     replay = f"{REPLAY_REF.repo}@{REPLAY_REF.revision}"
     assert run(duel_spec, store, tmp_path, "duel", "--challenger", replay, "--size", "huge") == 2
     assert "duel size 'huge' is not one of" in capsys.readouterr().err
@@ -372,8 +370,6 @@ def test_what_the_duel_command_refuses(duel_spec, store, tmp_path, capsys):
             str(root),
             "--run-dir",
             str(tmp_path / "runs"),
-            "--key",
-            str(key),
             "--runtime",
             "local",
         ]
