@@ -1,5 +1,6 @@
 """`python -m vector_protocol.serve`, run as a real subprocess and spoken to over the raw wire format."""
 
+import contextlib
 import json
 import pickle
 import socket
@@ -200,7 +201,9 @@ def test_an_object_array_announced_to_the_server_is_refused(probe_repo, serve):
         "arrays": [{"name": "qpos", "dtype": "|O", "shape": [2]}],
     }
     conn.send_bytes(json.dumps(head).encode())
-    conn.send_bytes(pickle.dumps(np.array([1, 2], dtype=object)))
+    # The head alone is refused: the server may answer and close before the array is sent.
+    with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+        conn.send_bytes(pickle.dumps(np.array([1, 2], dtype=object)))
     assert conn.poll(20)
     op, fields, _ = wire.recv(conn)
     assert op == "error" and "dtype '|O'" in fields["message"]
