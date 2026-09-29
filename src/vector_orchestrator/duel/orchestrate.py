@@ -299,8 +299,9 @@ class Orchestrator:
         #: Units run at once on each GPU, each a simulator and a policy server of its own: as many
         #: as one card's memory holds.
         self.workers = max(1, int(workers))
-        #: The host's GPUs (`slots.gpus`): CUDA_VISIBLE_DEVICES, else what nvidia-smi lists.
-        self.cards = list(cards) if cards is not None else gpus()
+        #: The GPUs to use; None for the host's (`slots.gpus`), read as each duel starts, since a
+        #: validator's GPU lease sets CUDA_VISIBLE_DEVICES for the step it runs a duel in.
+        self.cards = list(cards) if cards is not None else None
         #: What the duel's workers share: its rows, live frames and the store.
         self._lock = threading.RLock()
         self.live = live or LiveReporter(None, None)
@@ -478,7 +479,9 @@ class Orchestrator:
             duel, force=True, phase="materializing", message="materializing the demonstrations"
         )
         duel.prompts = Materialized(root=duel.run_dir / "prompts", prompts={}, done=False)
-        slots = Slots(self.workers, self.cards, duel.run_dir / "slots")
+        cards = self.cards if self.cards is not None else gpus()
+        slots = Slots(self.workers, cards, duel.run_dir / "slots")
+        log.info("duel %s runs on %d slot(s): %s", duel.event_id[:16], len(slots), cards)
         abort = threading.Event()
         try:
             with ThreadPoolExecutor(max_workers=3, thread_name_prefix="duel") as phases:
