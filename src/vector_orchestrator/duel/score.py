@@ -1,22 +1,11 @@
-"""Scoring and the crown rule: pure functions over published unit rows.
+"""Scoring and the crown rule: pure functions over a duel's unit rows.
 
-The rule, as `spec.duel._crown_comment` states it:
-
-- Per skill, a side's success rate is its successes over the skill's **non-void** units, a
-  fraction in [0, 1]; a skill with no scored unit has no rate (None). Its score is the mean of the
-  rates it has, under `average`.
-- A unit is void for **both** sides when it is void for either: a side that could not be scored on
-  a unit must not let the other side be scored on it alone. `void_fraction` is over every unit.
-- The challenger takes the crown iff `challenger.average >= king.average + score_margin / 100`.
-  `score_margin` is in percentage points and is divided by 100 here and nowhere else.
-- A duel whose void fraction exceeds `max_void_fraction` is void and moves nothing.
-- Paired per-unit outcomes (who succeeded where the other did not) are published as a diagnostic.
-  A track whose spec sets `duel.crown.alpha` also holds them to a one-sided sign test: the crown
-  moves only when the margin is met **and** the challenger's wins over the discordant units are
-  significant at that alpha (`sign_test_p`). A margin met on a handful of lucky units is noise,
-  and a crown moved by noise pays whoever resubmits most often.
-
-The skill list always comes from the spec, so nothing here names one.
+- Per task, a side's rate is its successes over the task's non-void units; a task with no scored
+  unit has none. Its score (`average`) is the mean of the rates it has.
+- A unit void for either side is void for both. A duel with more than `max_void` of its units void
+  is void and moves nothing.
+- The challenger takes the crown iff its average is at least the king's plus `margin` points, and
+  its wins over the discordant units pass a one-sided sign test at `alpha`.
 """
 
 from __future__ import annotations
@@ -45,10 +34,10 @@ def side_success(unit: dict[str, Any], side: str) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
-def skill_rate(units: Iterable[dict[str, Any]], side: str, skill: str) -> float | None:
+def task_rate(units: Iterable[dict[str, Any]], side: str, task: str) -> float | None:
     scored = successes = 0
     for u in units:
-        if u.get("skill") != skill or u.get("void"):
+        if u.get("task") != task or u.get("void"):
             continue
         s = side_success(u, side)
         if s is None:
@@ -58,18 +47,18 @@ def skill_rate(units: Iterable[dict[str, Any]], side: str, skill: str) -> float 
     return successes / scored if scored else None
 
 
-def average(per_skill: dict[str, float | None], skills: Sequence[str]) -> float | None:
-    present = [per_skill[s] for s in skills if per_skill.get(s) is not None]
+def average(per_task: dict[str, float | None], tasks: Sequence[str]) -> float | None:
+    present = [per_task[t] for t in tasks if per_task.get(t) is not None]
     return sum(present) / len(present) if present else None  # type: ignore[arg-type]
 
 
-def skill_scores(
-    units: Iterable[dict[str, Any]], side: str, skills: Sequence[str]
+def task_scores(
+    units: Iterable[dict[str, Any]], side: str, tasks: Sequence[str]
 ) -> dict[str, float | None]:
+    """`{"average": ..., task: rate, ...}`, tasks in spec order."""
     units = list(units)
-    per: dict[str, float | None] = {s: skill_rate(units, side, s) for s in skills}
-    per["average"] = average(per, skills)
-    return per
+    per: dict[str, float | None] = {t: task_rate(units, side, t) for t in tasks}
+    return {"average": average(per, tasks), **per}
 
 
 def crown_moves(
@@ -108,13 +97,7 @@ class Tally:
     void: int = 0
 
     def as_dict(self) -> dict[str, int]:
-        return {
-            "wins": self.wins,
-            "losses": self.losses,
-            "ties": self.ties,
-            "decided": self.decided,
-            "void": self.void,
-        }
+        return {"wins": self.wins, "losses": self.losses, "ties": self.ties, "void": self.void}
 
 
 def tally(units: Iterable[dict[str, Any]]) -> Tally:
@@ -146,7 +129,7 @@ class Verdict:
     reason: str
     void_fraction: float = 0.0
     tally: Tally = field(default_factory=Tally)
-    #: The sign test's alpha when the track sets one, and its p-value over the discordant units.
+    #: The sign test's alpha when one is given, and its p-value over the discordant units.
     paired_alpha: float | None = None
     paired_p_value: float | None = None
 
@@ -156,23 +139,18 @@ class Verdict:
         return None if k is None or c is None else (c - k) * 100.0
 
     def as_dict(self) -> dict[str, Any]:
-        doc: dict[str, Any] = {
+        """What an event publishes of the verdict (with `void_fraction`, which the duel adds)."""
+        return {
             "reason": self.reason,
-            "score_margin": self.score_margin,
             "delta_points": self.delta_points,
-            "void_fraction": self.void_fraction,
+            "p_value": self.paired_p_value,
         }
-        if self.paired_alpha is not None:
-            doc["paired_test"] = "sign"
-            doc["paired_alpha"] = self.paired_alpha
-            doc["paired_p_value"] = self.paired_p_value
-        return doc
 
 
 def verdict(
     units: Iterable[dict[str, Any]],
     score_margin: float,
-    skills: Sequence[str],
+    tasks: Sequence[str],
     paired_alpha: float | None = None,
 ) -> Verdict:
     """The duel's scores and whether the crown moves. Void units are excluded from both sides.
@@ -180,8 +158,8 @@ def verdict(
     With `paired_alpha`, a met margin moves the crown only when `sign_test_p` over the paired
     units is at most `paired_alpha`; the reason is then `not-significant` when it is not."""
     units = list(units)
-    king = skill_scores(units, "king", skills)
-    challenger = skill_scores(units, "challenger", skills)
+    king = task_scores(units, "king", tasks)
+    challenger = task_scores(units, "challenger", tasks)
     moves = crown_moves(king["average"], challenger["average"], score_margin)
     paired = tally(units)
     p_value = sign_test_p(paired.wins, paired.losses) if paired_alpha is not None else None

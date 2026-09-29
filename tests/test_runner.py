@@ -14,33 +14,60 @@ import time
 
 import pytest
 
-from vector_orchestrator.benchmarks import subprocess_runner as runner
+from vector_orchestrator import runner
+from vector_orchestrator.robotwin import read_result
 
 AUTHKEY_ENV = "VECTOR_TEST_POLICY_AUTHKEY"
 AUTHKEY = "00112233445566778899aabbccddeeff"
 
 
 @pytest.fixture
-def fake(fake_installed):
-    import vector_fake_benchmark
-
-    return vector_fake_benchmark.BENCHMARK
+def fake(fake_benchmark):
+    return fake_benchmark
 
 
 def unit(n: int, behaviour: str = "succeed", prompt: str = "/prompts/p.npz") -> dict:
     return {
-        "unit_id": f"fp-{n:03d}",
-        "skill": "franka_pick_and_place",
+        "unit_id": f"place_cube_plate-{n:02d}",
         "task": "place_cube_plate",
-        "instance_params": {"scene_seed": 7, "embodiment": ["franka-panda", "franka-panda", 0.6]},
+        "scene_seeds": [7],
+        "demo_seeds": [8],
         "prompt": prompt,
         "fake_behaviour": behaviour,
     }
 
 
+def run_units(
+    benchmark,
+    units,
+    *,
+    work_root,
+    policy_address,
+    authkey_env,
+    timeout_s,
+    env=None,
+    on_outcome=None,
+    deadline=None,
+):
+    """Every unit in order, each in `work_root/<unit_id>`; one not started by `deadline` is void."""
+    outcomes = []
+    for u in units:
+        if deadline is not None and time.monotonic() >= deadline:
+            outcome = runner.voided(f"{benchmark.id}: the side ran out of its wall-clock budget")
+        else:
+            outcome = runner.run_unit(
+                benchmark, u, prompt=u.get("prompt"), out_dir=work_root / u["unit_id"],
+                policy_address=policy_address, authkey_env=authkey_env, timeout_s=timeout_s, env=env,
+            )  # fmt: skip
+        if on_outcome is not None:
+            on_outcome(u, outcome)
+        outcomes.append(outcome)
+    return outcomes
+
+
 def run(fake, units, tmp_path, timeout_s=30.0, env=None):
     seen = []
-    outcomes = runner.run_units(
+    outcomes = run_units(
         fake,
         units,
         work_root=tmp_path / "units",
@@ -57,8 +84,8 @@ def run(fake, units, tmp_path, timeout_s=30.0, env=None):
 def test_a_unit_runs_in_a_subprocess_and_its_result_comes_back(fake, tmp_path):
     (outcome,) = run(fake, [unit(0)], tmp_path)
     assert (outcome.success, outcome.void, outcome.steps, outcome.error) == (True, False, 5, None)
-    assert outcome.progress == 1.0 and outcome.wall_s > 0
-    assert outcome.clip == str(tmp_path / "units" / "fp-000" / "evaluation.mp4")
+    assert outcome.wall_s > 0
+    assert outcome.clip == str(tmp_path / "units" / "place_cube_plate-00" / "evaluation.mp4")
     assert "prompt_sha256" in outcome.extra, "what the benchmark adds is kept, not dropped"
 
 
@@ -96,7 +123,7 @@ def test_the_side_wall_clock_voids_the_units_left_when_it_runs_out(fake, tmp_pat
     """`budgets.side_wall_seconds` bounds a side: once it is spent, the units not yet started are
     void as timed out rather than run, and the loop still reports every one of them."""
     seen = []
-    outcomes = runner.run_units(
+    outcomes = run_units(
         fake,
         [unit(0, "hang"), unit(1), unit(2)],
         work_root=tmp_path / "units",
@@ -107,21 +134,21 @@ def test_the_side_wall_clock_voids_the_units_left_when_it_runs_out(fake, tmp_pat
         deadline=time.monotonic() + 0.5,
         on_outcome=lambda u, o: seen.append(u["unit_id"]),
     )
-    assert seen == ["fp-000", "fp-001", "fp-002"]
+    assert seen == ["place_cube_plate-00", "place_cube_plate-01", "place_cube_plate-02"]
     first, *rest = outcomes
     assert first.error == "fake: unit exceeded its 1s budget"
     for outcome in rest:
         assert outcome.void and outcome.error == "fake: the side ran out of its wall-clock budget"
-    assert not (tmp_path / "units" / "fp-001").exists(), "a unit past the deadline was run"
+    assert not (tmp_path / "units" / "place_cube_plate-01").exists(), (
+        "a unit past the deadline was run"
+    )
 
 
 def test_a_silent_run_is_void_even_where_an_earlier_command_left_a_result(fake, tmp_path):
     """The directory a unit ran in before - an earlier attempt, or the materialize command, which
     writes result.json too - must not lend its result or clip to a run that wrote neither."""
-    out = tmp_path / "units" / "fp-000"
-    materialize = fake.materialize_command(
-        unit={"task": "place_cube_plate", "instance_params": {"scene_seed": 7}}, out_dir=str(out)
-    )
+    out = tmp_path / "units" / "place_cube_plate-00"
+    materialize = fake.materialize_command(unit=unit(0), out_dir=str(out))
     assert (
         runner.run_argv(
             materialize, env={"PATH": "/usr/bin:/bin"}, timeout_s=30, log_path=tmp_path / "m.log"
@@ -258,7 +285,7 @@ def test_a_plugin_that_puts_the_key_on_the_command_line_is_not_run(fake, tmp_pat
 
     (outcome,) = run(Leaky(), [unit(0)], tmp_path)
     assert outcome.void and "put the policy authkey on the command line" in outcome.error
-    assert not (tmp_path / "units" / "fp-000" / "benchmark.log").exists(), "it was run"
+    assert not (tmp_path / "units" / "place_cube_plate-00" / "benchmark.log").exists(), "it was run"
 
 
 def test_no_authkey_in_the_environment_is_a_harness_fault(fake, tmp_path):
@@ -382,7 +409,7 @@ def test_success_and_void_cannot_disagree():
 def test_a_result_carrying_only_what_the_abi_requires_still_makes_an_outcome():
     out = runner.outcome_from({"success": False, "void": False, "steps": 3, "error": None})
     assert (out.success, out.void, out.steps, out.error) == (False, False, 3, None)
-    assert out.progress is None and out.metric is None and out.extra == {}
+    assert out.extra == {}
 
 
 def test_non_finite_numbers_in_a_result_never_stop_the_duel(fake, tmp_path):
@@ -391,18 +418,18 @@ def test_non_finite_numbers_in_a_result_never_stop_the_duel(fake, tmp_path):
 
     class NaN(type(fake)):
         def run_command(self, *, out_dir, **kw):
-            body = '{"success": true, "void": false, "steps": NaN, "progress": Infinity, "metric": -Infinity}'
+            body = '{"success": true, "void": false, "steps": NaN, "time": Infinity}'
             code = f"open({out_dir + '/result.json'!r}, 'w').write({body!r})"
             return [sys.executable, "-c", code]
 
         def read_result(self, *, out_dir):
-            return runner.read_result_file(out_dir)
+            return read_result(out_dir, None)
 
     outcomes = run(NaN(), [unit(0), unit(1)], tmp_path)
     assert len(outcomes) == 2
     for outcome in outcomes:
         assert (outcome.success, outcome.void) == (True, False)
-        assert (outcome.steps, outcome.progress, outcome.metric) == (None, None, None)
+        assert outcome.steps is None
     assert runner.outcome_from({"success": False, "steps": 1e400}).steps is None
 
 
@@ -431,7 +458,7 @@ def test_the_log_tail_reads_only_the_end_of_a_huge_log(tmp_path):
         "import resource, sys\n"
         "resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))\n"
         "from pathlib import Path\n"
-        "from vector_orchestrator.benchmarks.subprocess_runner import _tail\n"
+        "from vector_orchestrator.runner import _tail\n"
         f"print(_tail(Path({str(log)!r})))\n"
     )
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
@@ -439,7 +466,7 @@ def test_the_log_tail_reads_only_the_end_of_a_huge_log(tmp_path):
     assert done.stdout.strip().endswith("the simulator lost the GPU")
 
 
-def test_read_result_file_never_raises(tmp_path):
-    assert runner.read_result_file(tmp_path)["void"] is True
+def test_read_result_never_raises(tmp_path):
+    assert read_result(tmp_path, None)["void"] is True
     (tmp_path / "result.json").write_text("[1, 2]")
-    assert runner.read_result_file(tmp_path)["error"] == "unreadable result.json"
+    assert read_result(tmp_path, None)["error"] == "result.json holds list"

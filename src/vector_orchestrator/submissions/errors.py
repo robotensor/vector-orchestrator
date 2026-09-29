@@ -1,9 +1,8 @@
 """The two ways a submission fails to run, kept apart because they mean different things.
 
 A rejection is the submission's own doing and its reason is publishable: the repository is not
-there, is too large, its manifest is wrong, its requirements do not install, its policy does not
-build. A `SubmissionError` is the harness's: the Hub is unreachable, Docker is not there, the base
-image is not on this host. The first is a verdict on the entry; the second is nobody's loss.
+there, is too large, or holds what it may not. A `SubmissionError` is the harness's: the Hub is
+unreachable. The first is a verdict on the entry; the second is nobody's loss.
 """
 
 from __future__ import annotations

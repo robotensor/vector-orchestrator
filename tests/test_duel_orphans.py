@@ -8,12 +8,10 @@ import subprocess
 import time
 from pathlib import Path
 
-from vector_orchestrator.benchmarks.subprocess_runner import run_argv
 from vector_orchestrator.duel import orphans
 from vector_orchestrator.duel.orphans import Ledger, boot_id, reap_ledger, reap_run_root
+from vector_orchestrator.runner import run_argv
 from vector_orchestrator.store.writer import atomic_write_json
-
-TRACK = "franka_1arm"
 
 
 def started(argv: list[str], **kwargs) -> subprocess.Popen:
@@ -27,7 +25,7 @@ def members_soon(pgid: int, count: int) -> None:
 
 
 def test_a_group_a_killed_orchestrator_left_is_reaped_whole(tmp_path):
-    unit = tmp_path / "runs" / TRACK / ("d" * 16) / "challenger" / "fp-000"
+    unit = tmp_path / "runs" / ("d" * 16) / "challenger" / "fp-000"
     unit.mkdir(parents=True)
     leader = started(["sh", "-c", "sleep 60 & sleep 60; wait"])
     try:
@@ -76,7 +74,7 @@ def test_a_group_that_is_no_longer_the_one_recorded_is_left_alone(tmp_path):
 
 
 def test_a_decided_duel_is_not_searched(tmp_path):
-    duel = tmp_path / "runs" / TRACK / ("e" * 16)
+    duel = tmp_path / "runs" / ("e" * 16)
     (duel / "king" / "fs-001").mkdir(parents=True)
     (duel / "outcome.json").write_text("{}")
     other = started(["sleep", "60"])

@@ -1,20 +1,15 @@
-"""The append-only result store.
+"""The append-only result store, as it is mirrored to Hugging Face:
 
-Layout (spec.store):
-  manifest.json
-  tracks/{track}/head.json
-  tracks/{track}/queue.json
-  tracks/{track}/index-NNNN.jsonl     one '<canonical_json>' per line
-  events/{track}/{event_id}.json
-  media/{sha[:k]}/{sha}.{ext}
+    manifest.json              {schema, spec_version}
+    head.json                  {seq, block, king}: a cache of the index
+    queue.json                 the queue, as the dashboard shows it
+    index-NNNN.jsonl           one canonical JSON record per published duel
+    events/<event_id>.json     a duel's units and scores
+    media/<sha[:2]>/<sha>.mp4  clips
 
-Every write is atomic (tmp + rename) except the index append, which is a single O_APPEND write
-followed by fsync, so a concurrent reader sees at most one torn final line, which the dashboard
-tolerates.
-
-The index is the store's truth. A record's sequence number comes from the last whole line of the
-index, not from `head.json`, which is a cache the append rewrites: a crash between the two would
-otherwise publish two records under one seq.
+Every write is atomic (tmp + rename) except the index append, a single O_APPEND write and fsync, so
+a reader sees at most one torn final line. The index is the truth: a record's seq comes from its
+last whole line, never from `head.json`.
 """
 
 from __future__ import annotations
@@ -33,36 +28,25 @@ from typing import Any
 from ..canon import canonical_json, sha256_file
 from ..spec import Spec
 
-#: The event kinds that may move the crown. Everything else is published and rendered but never
-#: enters a lineage - see `king_after`. Matches `CROWNING` in the dashboard's store reader.
-CROWNING = frozenset({"duel", "genesis", "succession"})
+SCHEMA = 6
+LINES_PER_PART = 1000
+VIDEO = "mp4"
 
 LOCK_FILE = ".orchestrator.lock"
 
-#: Serialises appends to one track's index, inside that track's directory. Separate from
-#: `store_lock`, which is the operator's one-writer lock over a whole store.
+#: Serialises appends to the index. Separate from `store_lock`, the one-writer lock over a store.
 INDEX_LOCK_FILE = ".index.lock"
 
 log = logging.getLogger(__name__)
 
 
 def king_after(record: dict[str, Any], previous: dict | None) -> dict | None:
-    """Who holds the crown after `record`, given who held it before.
-
-    Crowning is an allow-list: only a duel, a genesis, a succession or a vacancy can move it. Any
-    other kind leaves it exactly as it was - it cannot take the crown, lose it, or blank it by
-    omission - and a kind added later cannot start doing so by accident. `append` and
-    `rebuild_head` both go through here, so a rebuilt head is the head the writer meant.
-    """
-    kind = record.get("kind")
-    if record.get("new_king") and kind in CROWNING:
-        return record["new_king"]
-    if kind in ("genesis", "succession"):
+    """Who holds the crown after `record`: a genesis crowns its entrant (its `king`), a duel keeps
+    its king unless the challenger dethroned it."""
+    if record.get("kind") == "genesis":
         return record.get("king")
-    if kind == "vacancy":
-        return None
-    if kind == "duel":
-        return record.get("new_king") if record.get("dethroned") else record.get("king")
+    if record.get("kind") == "duel":
+        return record.get("challenger") if record.get("dethroned") else record.get("king")
     return previous
 
 
@@ -117,29 +101,25 @@ class Store:
         self.root = Path(root)
         self.spec = spec
         self.touched: set[str] = set()
-        #: The daemon's duel loop and the intake's request threads both write a store, and one
-        #: file touched between a drain's copy and its clear would miss the push.
+        #: A duel's worker threads touch files concurrently, and one touched between a drain's
+        #: copy and its clear would miss the push.
         self._touched_lock = threading.Lock()
 
     # ---------------------------------------------------------------- paths
-    def track_dir(self, track: str) -> Path:
-        return self.root / "tracks" / track
+    def index_part_path(self, part: int) -> Path:
+        return self.root / f"index-{part:04d}.jsonl"
 
-    def index_part_path(self, track: str, part: int) -> Path:
-        return self.track_dir(track) / f"index-{part:04d}.jsonl"
+    def head_path(self) -> Path:
+        return self.root / "head.json"
 
-    def head_path(self, track: str) -> Path:
-        return self.track_dir(track) / "head.json"
+    def queue_path(self) -> Path:
+        return self.root / "queue.json"
 
-    def queue_path(self, track: str) -> Path:
-        return self.track_dir(track) / "queue.json"
+    def event_path(self, event_id: str) -> Path:
+        return self.root / "events" / f"{event_id}.json"
 
-    def event_path(self, track: str, event_id: str) -> Path:
-        return self.root / "events" / track / f"{event_id}.json"
-
-    def media_path(self, sha: str, ext: str) -> Path:
-        bucket = sha[: int(self.spec.store["media_bucket_hex"])]
-        return self.root / "media" / bucket / f"{sha}.{ext}"
+    def media_path(self, sha: str) -> Path:
+        return self.root / "media" / sha[:2] / f"{sha}.{VIDEO}"
 
     def _touch(self, path: Path) -> None:
         with self._touched_lock:
@@ -151,54 +131,29 @@ class Store:
 
     # ---------------------------------------------------------------- manifest
     def init(self) -> dict[str, Any]:
-        manifest = {
-            "schema": int(self.spec.store["schema"]),
-            "spec_version": self.spec.version,
-            "spec_fingerprint": self.spec.fingerprint,
-            "tracks": list(self.spec.tracks),
-        }
+        manifest = {"schema": SCHEMA, "spec_version": self.spec.version}
         atomic_write_json(self.root / "manifest.json", manifest)
         self._touch(self.root / "manifest.json")
-        # A head per track: each has its own king, lineage and sequence, and a track with no king
-        # yet still needs somewhere for its first genesis to land.
-        for track in self.spec.tracks:
-            if not self.head_path(track).exists():
-                self.write_head(track, seq=0, event_id="", block=0, finished_at="", king=None)
+        if not self.head_path().exists():
+            self.write_head(seq=0, block=0, king=None)
         return manifest
 
     def manifest(self) -> dict[str, Any] | None:
         return read_json(self.root / "manifest.json")
 
     # ---------------------------------------------------------------- head / index
-    def head(self, track: str) -> dict[str, Any] | None:
-        return read_json(self.head_path(track))
+    def head(self) -> dict[str, Any] | None:
+        return read_json(self.head_path())
 
-    def write_head(
-        self,
-        track: str,
-        *,
-        seq: int,
-        event_id: str,
-        block: int,
-        finished_at: str,
-        king: dict | None,
-    ) -> None:
-        head = {
-            "schema": int(self.spec.store["schema"]),
-            "seq": seq,
-            "event_id": event_id,
-            "block": block,
-            "finished_at": finished_at,
-            "king": king,
-        }
-        atomic_write_json(self.head_path(track), head)
-        self._touch(self.head_path(track))
+    def write_head(self, *, seq: int, block: int, king: dict | None) -> None:
+        atomic_write_json(self.head_path(), {"seq": seq, "block": block, "king": king})
+        self._touch(self.head_path())
 
     @contextmanager
-    def index_lock(self, track: str):
-        """Held across reading the last seq, appending and rewriting the head, so two appends to
-        one track cannot take the same number."""
-        path = self.track_dir(track) / INDEX_LOCK_FILE
+    def index_lock(self):
+        """Held across reading the last seq, appending and rewriting the head, so two appends
+        cannot take the same number."""
+        path = self.root / INDEX_LOCK_FILE
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
         try:
@@ -207,9 +162,9 @@ class Store:
         finally:
             os.close(fd)
 
-    def index_parts(self, track: str) -> list[int]:
+    def index_parts(self) -> list[int]:
         parts, part = [], 0
-        while self.index_part_path(track, part).exists():
+        while self.index_part_path(part).exists():
             parts.append(part)
             part += 1
         return parts
@@ -225,17 +180,17 @@ class Store:
         except (UnicodeDecodeError, ValueError, RecursionError):
             return False
 
-    def repair_tail(self, track: str) -> None:
+    def repair_tail(self) -> None:
         """Make the newest index part end in a whole line again.
 
         A crash can leave a partial final line. If what is there is a whole canonical record that
         lost only its newline it is completed; anything else is dropped, because appending after it
         would splice the next record onto half of one.
         """
-        parts = self.index_parts(track)
+        parts = self.index_parts()
         if not parts:
             return
-        path = self.index_part_path(track, parts[-1])
+        path = self.index_part_path(parts[-1])
         data = path.read_bytes()
         if not data or data.endswith(b"\n"):
             return
@@ -253,10 +208,10 @@ class Store:
             fh.flush()
             os.fsync(fh.fileno())
 
-    def last_record(self, track: str) -> dict[str, Any] | None:
+    def last_record(self) -> dict[str, Any] | None:
         """The last whole line of the newest index part, as the index itself has it."""
-        for part in reversed(self.index_parts(track)):
-            for line in reversed(self.index_part_path(track, part).read_bytes().split(b"\n")):
+        for part in reversed(self.index_parts()):
+            for line in reversed(self.index_part_path(part).read_bytes().split(b"\n")):
                 if not line:
                     continue
                 try:
@@ -267,33 +222,26 @@ class Store:
                     return record
         return None
 
-    def next_seq(self, track: str) -> int:
+    def next_seq(self) -> int:
         """One past the index's last record. `head.json` is a cache and never decides this."""
-        last = self.last_record(track)
+        last = self.last_record()
         return int(last["seq"]) + 1 if last else 1
 
     def part_of(self, seq: int) -> int:
-        per = max(1, int(self.spec.store["index_lines_per_part"]))
-        return (seq - 1) // per
+        return (seq - 1) // LINES_PER_PART
 
-    def append(self, track: str, record: dict[str, Any]) -> int:
-        """Assign the next seq, append to the index and advance the head.
-
-        The event is written first (`write_event`) and its file's sha256 goes into the record as
-        `event_sha256`, so the index line pins the event's bytes - unit outcomes, prompt hashes,
-        clip hashes - and not only the fields the index repeats.
-        """
-        event_path = self.event_path(track, str(record["event_id"]))
-        if not event_path.is_file():
-            raise RuntimeError(f"write the event before its record: {event_path} does not exist")
+    def append(self, record: dict[str, Any]) -> int:
+        """Assign the next seq, append the record to the index and advance the head. The event
+        is written first (`write_event`)."""
+        if not self.event_path(str(record["event_id"])).is_file():
+            raise RuntimeError(f"write the event before its record: {record['event_id']}")
         record = dict(record)
-        record["event_sha256"] = sha256_file(event_path)
-        with self.index_lock(track):
-            self.repair_tail(track)
-            seq = self.next_seq(track)
+        with self.index_lock():
+            self.repair_tail()
+            seq = self.next_seq()
             record["seq"] = seq
             line = canonical_json(record) + "\n"
-            path = self.index_part_path(track, self.part_of(seq))
+            path = self.index_part_path(self.part_of(seq))
             path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
             try:
@@ -302,46 +250,31 @@ class Store:
             finally:
                 os.close(fd)
             self._touch(path)
-            head = self.head(track)
+            head = self.head()
             king = king_after(record, head.get("king") if head else None)
-            self.write_head(
-                track,
-                seq=seq,
-                event_id=str(record["event_id"]),
-                block=int(record["block"]),
-                finished_at=str(record["finished_at"]),
-                king=king,
-            )
+            self.write_head(seq=seq, block=int(record["block"]), king=king)
         return seq
 
-    def rebuild_head(self, track: str) -> dict[str, Any] | None:
-        """Rewrite `head.json` from the index, which is the truth: its last record, and the king the
-        records crown one after another - what `append` writes, for a head a kill between the index
-        line and the head's rewrite left behind. The head; None for an empty index (left as is)."""
-        with self.index_lock(track):
-            self.repair_tail(track)
+    def rebuild_head(self) -> dict[str, Any] | None:
+        """Rewrite `head.json` from the index, for a head a kill between the index line and the
+        head's rewrite left behind; None for an empty index (left as is)."""
+        with self.index_lock():
+            self.repair_tail()
             king: dict | None = None
             last: dict[str, Any] | None = None
-            for record in self.iter_index(track):
+            for record in self.iter_index():
                 king = king_after(record, king)
                 last = record
             if last is None:
                 return None
-            self.write_head(
-                track,
-                seq=int(last["seq"]),
-                event_id=str(last["event_id"]),
-                block=int(last["block"]),
-                finished_at=str(last["finished_at"]),
-                king=king,
-            )
-        return self.head(track)
+            self.write_head(seq=int(last["seq"]), block=int(last["block"]), king=king)
+        return self.head()
 
-    def iter_index(self, track: str) -> list[dict[str, Any]]:
+    def iter_index(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         part = 0
         while True:
-            path = self.index_part_path(track, part)
+            path = self.index_part_path(part)
             if not path.exists():
                 break
             for raw in path.read_text(encoding="utf-8").split("\n"):
@@ -356,24 +289,23 @@ class Store:
         return out
 
     # ---------------------------------------------------------------- events / queue / media
-    def write_event(self, track: str, event: dict[str, Any]) -> Path:
-        path = self.event_path(track, str(event["event_id"]))
+    def write_event(self, event: dict[str, Any]) -> Path:
+        path = self.event_path(str(event["event_id"]))
         atomic_write_json(path, event)
         self._touch(path)
         return path
 
-    def event(self, track: str, event_id: str) -> dict[str, Any] | None:
-        return read_json(self.event_path(track, event_id))
+    def event(self, event_id: str) -> dict[str, Any] | None:
+        return read_json(self.event_path(event_id))
 
-    def write_queue(self, track: str, snapshot: dict[str, Any]) -> None:
-        atomic_write_json(self.queue_path(track), snapshot)
-        self._touch(self.queue_path(track))
+    def write_queue(self, snapshot: dict[str, Any]) -> None:
+        atomic_write_json(self.queue_path(), snapshot)
+        self._touch(self.queue_path())
 
-    def put_media(self, src: str | Path, ext: str | None = None) -> str:
+    def put_media(self, src: str | Path) -> str:
         src = Path(src)
-        ext = ext or src.suffix.lstrip(".")
         sha = sha256_file(src)
-        dst = self.media_path(sha, ext)
+        dst = self.media_path(sha)
         if not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
             tmp = dst.with_name(dst.name + ".tmp")
@@ -382,8 +314,8 @@ class Store:
         self._touch(dst)
         return sha
 
-    def has_media(self, sha: str, ext: str) -> bool:
-        return self.media_path(sha, ext).exists()
+    def has_media(self, sha: str) -> bool:
+        return self.media_path(sha).exists()
 
     def drain_touched(self) -> list[str]:
         with self._touched_lock:

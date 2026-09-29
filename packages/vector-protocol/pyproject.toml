@@ -23,7 +23,6 @@ testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 pythonpath = ["tests"]
 markers = [
-  "sim: needs a plugged benchmark's simulator (assets, GPU)",
-  "container: needs Docker and builds or runs a policy container",
+  "sim: needs a benchmark's simulator (assets, GPU)",
   "slow: takes minutes",
 ]

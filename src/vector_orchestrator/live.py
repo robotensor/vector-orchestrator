@@ -1,9 +1,12 @@
-"""Live progress frames: ephemeral, best-effort, never part of the record.
+"""Live progress frames, POSTed to the dashboard's `/api/live`: ephemeral, best-effort, never
+part of the record.
 
-The dashboard's `POST /api/live` checks a frame strictly where a wrong value would misfile it -
-schema, track, event id, phase, side - and silently drops a unit whose skill it does
-not know. So `build_frame` refuses to build a frame the dashboard would refuse or quietly thin out,
-and the error surfaces here rather than as a 422 nobody reads or a progress bar with rows missing.
+    {schema, event_id, kind, king, challenger, phase, side, current, message, started_at, sent_at,
+     units: [{unit_id, task, void, outcome, king_success, challenger_success,
+              demo_video, king_video, challenger_video}]}
+
+The dashboard checks a frame strictly where a wrong value would misfile it, so `build_frame`
+refuses to build one it would refuse.
 """
 
 from __future__ import annotations
@@ -16,149 +19,63 @@ import socket
 import threading
 import time
 import urllib.parse
-from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .spec import Spec
 from .store.records import now_iso
 
 log = logging.getLogger(__name__)
 
-#: The phases of a duel, in the order it goes through them (`PHASES` in the dashboard's
-#: `lib/live/types.ts` must equal this). `materializing` is when every unit's prompt is produced,
-#: once, before either side runs; a dashboard that predates it refuses those frames, and the duel
-#: goes on regardless, since a frame is only a window onto it.
+SCHEMA = 5
+PATH = "/api/live"
+MAX_FRAME_BYTES = 512 << 10
+MIN_INTERVAL_S = 1.0
+#: The phases of a duel, in order (`PHASES` in the dashboard's live types must equal this).
 PHASES = ("fetching", "checking", "materializing", "evaluating", "publishing", "done", "failed")
-
 SIDES = ("challenger", "king")
-
-#: The dashboard's own bounds on the fields it routes by. Matched with `fullmatch`: JavaScript's
-#: `$` is the end of the string, Python's also matches before a final newline.
 EVENT_ID_RE = re.compile(r"[0-9a-f]{8,64}")
 MAX_MESSAGE = 300
+UNIT_FIELDS = (
+    "unit_id", "task", "void", "outcome", "king_success", "challenger_success",
+    "demo_video", "king_video", "challenger_video",
+)  # fmt: skip
 
 
 def build_frame(
-    spec: Spec,
     *,
-    track: str,
     event_id: str,
     kind: str,
-    duel_size: str | None,
     king: dict[str, str] | None,
     challenger: dict[str, str] | None,
     phase: str,
     side: str | None,
     units: list[dict[str, Any]],
     current: dict[str, Any] | None,
-    recent_media: dict[str, Any] | None,
     message: str,
     started_at: str,
 ) -> dict[str, Any]:
     if phase not in PHASES:
         raise ValueError(f"phase must be one of {PHASES}, not {phase!r}")
-    if track not in spec.tracks:
-        raise ValueError(f"track must be one of {spec.tracks}, not {track!r}")
     if not EVENT_ID_RE.fullmatch(event_id):
         raise ValueError(f"event_id must be 8-64 lowercase hex characters, not {event_id!r}")
     if side is not None and side not in SIDES:
         raise ValueError(f"side must be one of {SIDES} or None, not {side!r}")
-    skills = spec.skills(track)
-    unknown = sorted({str(u.get("skill")) for u in units} - set(skills))
-    if unknown:
-        raise ValueError(f"units carry skills {unknown} that track {track} does not score")
-    # The dashboard keeps a unit only with a known skill, a non-empty task and a numeric instance,
-    # and drops the rest without a word: a progress bar with rows missing is worse than an error.
     for u in units:
-        where = f"unit {u.get('unit_id')}"
-        if not _text(u.get("task")):
-            raise ValueError(f"{where}: task must be a non-empty string, not {u.get('task')!r}")
-        if not _number(u.get("instance")):
-            raise ValueError(f"{where}: instance must be a number, not {u.get('instance')!r}")
-    _check_unit_like("current", current, skills, task_may_be_empty=True)
-    if recent_media is not None:
-        _check_unit_like("recent_media", recent_media.get("unit"), skills, task_may_be_empty=True)
-        if recent_media.get("side") not in SIDES:
-            raise ValueError(f"recent_media: side must be one of {SIDES}")
-    for name, ref in (("king", king), ("challenger", challenger)):
-        if ref is not None and not _text(ref.get("repo")):
-            raise ValueError(f"{name}: repo must be a non-empty string")
-
-    per_skill: dict[str, dict[str, dict[str, int]]] = {s: {} for s in SIDES}
-    for s in per_skill:
-        for skill in skills:
-            skill_units = [u for u in units if u.get("skill") == skill]
-            done = sum(
-                1 for u in skill_units if isinstance(u.get(f"{s}_success"), bool) or u.get("void")
-            )
-            per_skill[s][skill] = {"done": done, "total": len(skill_units)}
-    done = sum(v["done"] for v in per_skill[side].values()) if side in per_skill else 0
-    live_units = [
-        {
-            "unit_id": u.get("unit_id"),
-            "skill": u.get("skill"),
-            "task": u.get("task"),
-            "task_label": u.get("task_label"),
-            "instance": u.get("instance"),
-            "king_success": u.get("king_success"),
-            "challenger_success": u.get("challenger_success"),
-            "outcome": u.get("outcome")
-            if isinstance(u.get("king_success"), bool)
-            and isinstance(u.get("challenger_success"), bool)
-            else None,
-            "demo_video": u.get("demo_video"),
-            "king_video": u.get("king_video"),
-            "challenger_video": u.get("challenger_video"),
-        }
-        for u in units
-    ]
+        if not isinstance(u.get("task"), str) or not u["task"]:
+            raise ValueError(f"unit {u.get('unit_id')}: task must be a non-empty string")
     return {
-        "schema": int(spec.live["schema"]),
-        "track": track,
+        "schema": SCHEMA,
         "event_id": event_id,
         "kind": kind,
-        "duel_size": duel_size,
         "king": king,
         "challenger": challenger,
         "phase": phase,
         "side": side,
-        "done": done,
-        "total": len(units),
-        "skill_progress": per_skill,
         "current": current,
-        "recent_media": recent_media,
-        "units": live_units,
         "message": message[:MAX_MESSAGE],
         "started_at": started_at,
         "sent_at": now_iso(),
+        "units": [{k: u.get(k) for k in UNIT_FIELDS} for u in units],
     }
-
-
-def _text(value: Any) -> bool:
-    return isinstance(value, str) and bool(value)
-
-
-def _number(value: Any) -> bool:
-    """A JSON number, as `typeof x === 'number'` means it: a bool is not one."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _check_unit_like(
-    what: str, unit: Any, skills: Sequence[str], *, task_may_be_empty: bool = False
-) -> None:
-    """`current` and `recent_media.unit` are rendered only if the dashboard can read all three of
-    skill, task and instance; a frame it would null out is not built."""
-    if unit is None:
-        return
-    if not isinstance(unit, Mapping):
-        raise ValueError(f"{what}: expected an object, not {unit!r}")
-    if unit.get("skill") not in skills:
-        raise ValueError(f"{what}: skill {unit.get('skill')!r} is not one this track scores")
-    task = unit.get("task")
-    if not (isinstance(task, str) if task_may_be_empty else _text(task)):
-        raise ValueError(f"{what}: task must be a string, not {task!r}")
-    if not _number(unit.get("instance")):
-        raise ValueError(f"{what}: instance must be a number, not {unit.get('instance')!r}")
 
 
 #: Of the dashboard's answer, which is a status and nothing the orchestrator acts on.
@@ -175,13 +92,12 @@ class LiveReporter:
     whatever host an answer names.
     """
 
-    def __init__(self, spec: Spec, url: str | None, token: str | None, *, timeout_s: float = 5.0):
-        self.spec = spec
-        self.url = (url.rstrip("/") + str(spec.live["path"])) if url else None
+    def __init__(self, url: str | None, token: str | None, *, timeout_s: float = 5.0):
+        self.url = (url.rstrip("/") + PATH) if url else None
         self.token = token
         self.timeout_s = timeout_s
-        self.min_interval_s = float(spec.live.get("min_interval_s", 1.0))
-        self.max_bytes = int(spec.live["max_frame_bytes"])
+        self.min_interval_s = MIN_INTERVAL_S
+        self.max_bytes = MAX_FRAME_BYTES
         self._last_sent = 0.0
         self.sent = 0
         self.failed = 0

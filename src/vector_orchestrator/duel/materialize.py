@@ -1,8 +1,7 @@
 """Every unit's prompt, produced once per duel, before either side runs.
 
-A track that scores the very scene it demonstrates (`prompts: "materialized"`) cannot publish its
-prompts ahead of time: the demonstration is the answer for that scene. So the orchestrator has the
-benchmark produce each unit's prompt here, on this host, before either side starts, and publishes
+A demonstration cannot be published ahead of time: it shows how to solve its task. So the
+orchestrator has the benchmark produce each unit's prompt here, on this host, before either side starts, and publishes
 the prompts' sha256 with the event. Both sides then run from those same files, which is the whole
 of what makes a duel fair on RoboTwin: an expert's trajectory is not reproducible from its seed
 (CuRobo's IK seed generators live as long as the environment, and planning retries stop on a wall
@@ -11,7 +10,7 @@ clock), so a prompt produced per side would differ per side.
 For each unit, in order, and resumably:
 
 1. `materialize_command(unit, out_dir)` runs as a subprocess with the allow-listed environment and
-   `budgets.materialize_wall_seconds`, in `<root>/<unit_id>/`.
+   `budgets.materialize`, in `<root>/<unit_id>/`.
 2. Its `result.json` must say the demonstration succeeded, and `prompt.npz` must exist.
 3. `verify_prompt(path, unit)` must say ok, and hash the file to what this module hashes it to:
    the published `prompt_sha256` is the sha256 of the file's bytes, which is what a third party
@@ -27,8 +26,8 @@ is not retried, since a second try would be a different demonstration than the o
 recorded. Each unit's prompt is appended to `<root>/manifest.jsonl` as it is done, so a restarted
 duel re-uses it rather than producing a new one, after checking the file still has its hash.
 
-Prompts stay in the run directory. The benchmark subprocess reads them from there; no policy
-container ever mounts it, and the prompt's privileged `meta` never crosses the policy socket.
+Prompts stay in the run directory. The benchmark subprocess reads them from there, and the
+prompt's privileged `meta` never crosses the policy socket.
 """
 
 from __future__ import annotations
@@ -42,15 +41,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..benchmarks.api import DEMONSTRATION_CLIP, PROMPT_FILE, RESULT_FILE
-from ..benchmarks.subprocess_runner import (
+from ..canon import sha256_file
+from ..robotwin import DEMONSTRATION_CLIP, PROMPT_FILE, RESULT_FILE
+from ..runner import (
     benchmark_environment,
     in_workdir,
     outcome_from,
     run_argv,
     workdir_of,
 )
-from ..canon import sha256_file
 from .orphans import Ledger, reap_ledger
 
 log = logging.getLogger(__name__)
@@ -92,10 +91,6 @@ class Prompt:
             return f"the prompt file changed after it was materialized ({found[:12]}...)"
         return None
 
-    def published(self) -> dict[str, Any]:
-        """The event's `prompts` entry: the unit and the sha256 both sides ran from."""
-        return {"unit_id": self.unit_id, "sha256": self.sha256, "demo_video": self.demo_sha256}
-
     def to_line(self, root: Path) -> dict[str, Any]:
         def rel(path: Path | None) -> str | None:
             return None if path is None else str(path.relative_to(root))
@@ -135,10 +130,6 @@ class Materialized:
     root: Path
     prompts: dict[str, Prompt]
 
-    def manifest(self) -> list[dict[str, Any]]:
-        """Every prompt both sides ran from, in unit order; a void unit has none."""
-        return [p.published() for p in self.prompts.values() if not p.void]
-
     @property
     def void(self) -> int:
         return sum(1 for p in self.prompts.values() if p.void)
@@ -173,7 +164,7 @@ def materialize_units(
     units: Iterable[Mapping[str, Any]],
     root: Path,
     *,
-    benchmark_of: Callable[[Mapping[str, Any]], Any],
+    benchmark: Any,
     env: Mapping[str, str] | None = None,
     timeout_s: float | None = None,
     deadline: float | None = None,
@@ -192,7 +183,7 @@ def materialize_units(
     own); a unit's prompt is recorded as it finishes, so the manifest's order is the finishing
     order, and `stop` and the deadline are asked as each unit starts."""
     root.mkdir(parents=True, exist_ok=True)
-    budget = float(spec.budgets["materialize_wall_seconds"]) if timeout_s is None else timeout_s
+    budget = float(spec.budgets["materialize"]) if timeout_s is None else timeout_s
     environ = dict(benchmark_environment(os.environ, "") if env is None else env)
     done = read_manifest(root)
     prompts: dict[str, Prompt] = {}
@@ -202,7 +193,7 @@ def materialize_units(
             root,
             done=done,
             prompts=prompts,
-            benchmark_of=benchmark_of,
+            benchmark=benchmark,
             env=environ,
             budget=budget,
             deadline=deadline,
@@ -232,7 +223,7 @@ def materialize_units(
         else:
             left = budget if deadline is None else min(budget, deadline - time.monotonic())
             prompt = materialize_unit(
-                benchmark_of(unit),
+                benchmark,
                 unit,
                 root / unit_id,
                 env=environ,
@@ -255,7 +246,7 @@ def _materialize_pooled(
     *,
     done: Mapping[str, Prompt],
     prompts: dict[str, Prompt],
-    benchmark_of: Callable[[Mapping[str, Any]], Any],
+    benchmark: Any,
     env: Mapping[str, str],
     budget: float,
     deadline: float | None,
@@ -288,7 +279,7 @@ def _materialize_pooled(
             )
         left = budget if deadline is None else min(budget, deadline - time.monotonic())
         return materialize_unit(
-            benchmark_of(unit),
+            benchmark,
             unit,
             root / unit_id,
             env=env,
@@ -346,7 +337,7 @@ def materialize_unit(
 
     try:
         argv = [str(a) for a in benchmark.materialize_command(unit=unit, out_dir=str(out_dir))]
-    except Exception as exc:  # noqa: BLE001 - the plugin's failure is this unit's
+    except Exception as exc:  # noqa: BLE001 - the benchmark's failure is this unit's
         return void(f"materialize_command failed: {type(exc).__name__}: {exc}")
     if not argv:
         return void("materialize_command returned an empty argv")

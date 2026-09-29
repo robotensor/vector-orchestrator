@@ -1,15 +1,13 @@
 """`repo@revision` to the commit it names, through the Hugging Face Hub, once.
 
-A branch or a tag is code that can change after it was queued; the queue, the duel id and the
-published record all hang off a 40-hex commit sha (`ids.is_commit_sha`), so a name is resolved
-here, at queue time, and never looked at again. A sha given as such is confirmed to exist. The
-same call lists the repository's files with their sizes, so a repository larger than
-`spec.submission.max_repo_bytes` is refused before a byte of it is downloaded.
+A branch or a tag is code that can change after it was committed to; the duel id and the published
+record hang off a 40-hex commit sha (`ids.is_commit_sha`), so a name is resolved once and never
+looked at again. A sha given as such is confirmed to exist. The same call lists the repository's
+files with their sizes, so an oversized repository is refused before a byte of it is downloaded.
 """
 
 from __future__ import annotations
 
-import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -69,70 +67,6 @@ def resolve(repo: str, revision: str, *, api: Any = None) -> Resolved:
         raise SubmissionError(f"the Hub resolved commit {revision} of {repo} to another, {sha}")
     return Resolved(
         repo=repo, revision=revision, sha=sha, files=_files(getattr(info, "siblings", None))
-    )
-
-
-def resolve_for_queue(
-    repo: str, revision: str, *, api: Any = None, deadline: float | None = None
-) -> Resolved:
-    """`resolve`, for a new queue entry: a ref under `refs/` is refused by name, and the commit
-    must be one a branch or a tag of the repository holds (`check_reachable`).
-
-    The Hub serves any commit it holds by its sha, a pull request's included, and anyone on the Hub
-    can open a pull request on a public repository: a commit only a pull request holds is not the
-    owner's code, and queued it would be duelled and published as theirs. `deadline`, a
-    `time.monotonic()`, bounds the history walk; past it the Hub counts as unavailable.
-    """
-    check_ref(repo, revision)
-    if revision.startswith("refs/"):
-        raise SubmissionRejected(
-            "resolve",
-            f"{repo}@{revision}: a ref under refs/, a pull request's included, is not queued; name "
-            "a branch or a tag as such (main, not refs/heads/main), or a commit",
-        )
-    if api is None:
-        from huggingface_hub import HfApi
-
-        api = HfApi()
-    resolved = resolve(repo, revision, api=api)
-    check_reachable(repo, resolved.sha, api=api, deadline=deadline)
-    return resolved
-
-
-def check_reachable(repo: str, sha: str, *, api: Any = None, deadline: float | None = None) -> None:
-    """`sha` as a commit a branch or a tag of `repo` holds, at its tip or in its history; otherwise
-    `SubmissionRejected`.
-
-    One call lists the branches and tags (`list_repo_refs`, which leaves pull requests out). A sha
-    at none of their tips is looked for in each one's history (`list_repo_commits`), stopping at
-    the first that holds it. The Hub has no cheaper ancestry check: a commit on no branch or tag
-    costs every branch's and tag's history, which for a policy repository is a page or two each.
-    A commit no branch holds any more (a force push, a deleted branch) is refused like a pull
-    request's.
-    """
-    if api is None:
-        from huggingface_hub import HfApi
-
-        api = HfApi()
-    with _asking_the_hub(repo, sha):
-        refs = api.list_repo_refs(repo, repo_type=REPO_TYPE)
-    tips = list(dict.fromkeys(ref.target_commit for ref in [*refs.branches, *refs.tags]))
-    if sha in tips:
-        return
-    for tip in tips:
-        with _asking_the_hub(repo, sha):
-            for commit in api.list_repo_commits(repo, repo_type=REPO_TYPE, revision=tip):
-                if commit.commit_id == sha:
-                    return
-                if deadline is not None and time.monotonic() > deadline:
-                    raise SubmissionError(
-                        f"the Hub took too long listing {repo}'s history to find {sha} on a "
-                        "branch or a tag"
-                    )
-    raise SubmissionRejected(
-        "resolve",
-        f"{repo}@{sha}: no branch or tag of the repository holds this commit; a pull request's "
-        "commit (refs/pr/N), or one no branch holds any more, is not queued",
     )
 
 

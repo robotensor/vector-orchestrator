@@ -2,7 +2,7 @@
 
 A submission is a Hugging Face repository at a revision; its key, a duel's id, an event's id, a
 unit's id and a unit's seed are all pure functions of published values, so anyone holding the
-record can recompute them. The formulas are also written out in `spec.json` (`duel.derivation`).
+record can recompute them.
 """
 
 from __future__ import annotations
@@ -60,30 +60,21 @@ def submission_key(repo: str, revision: str) -> str:
     return sha256_hex(f"{repo}@{revision}")[:16]
 
 
-def duel_id(
-    spec_version: int, track: str, challenger: SubmissionRef, king: SubmissionRef | None
-) -> str:
+def duel_id(spec_version: int, challenger: SubmissionRef, king: SubmissionRef | None) -> str:
     king_key = king.key if king else "none"
     king_rev = king.revision if king else "none"
     return sha256_hex(
-        "|".join(
-            [str(spec_version), track, challenger.key, challenger.revision, king_key, king_rev]
-        )
+        "|".join([str(spec_version), challenger.key, challenger.revision, king_key, king_rev])
     )
 
 
-def event_id(kind: str, track: str, block: int, subject: str) -> str:
+def event_id(kind: str, block: int, subject: str) -> str:
     """Unique per published event: the same pair may duel again in a later block."""
-    return sha256_hex("|".join(["event", kind, track, str(block), subject]))
+    return sha256_hex("|".join(["event", kind, str(block), subject]))
 
 
-def unit_seed(duel: str, skill: str, index: int) -> int:
-    return int(sha256_hex(f"{duel}|{skill}|{index}")[:8], 16)
-
-
-def unit_id(code: str, index: int) -> str:
-    """`<skill code>-<index>`: the code is the two-letter `skills.<skill>.code`."""
-    return f"{code}-{index:03d}"
+def unit_id(task: str, run: int) -> str:
+    return f"{task}-{run:02d}"
 
 
 def is_repo(value: str) -> bool:
@@ -91,9 +82,9 @@ def is_repo(value: str) -> bool:
 
 
 def is_commit_sha(value: str) -> bool:
-    """A resolved git commit, which is what a submission is queued and published at.
+    """A resolved git commit, which is what a submission is duelled and published at.
 
-    A branch or a tag is code that can change after it was queued or crowned, while the key, the
+    A branch or a tag is code that can change after it was committed to or crowned, while the key, the
     duel id and the published record - all hashes of this string - stay as they were. An
     abbreviation is refused too: it is a different key for the same code.
     """

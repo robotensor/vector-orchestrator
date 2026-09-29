@@ -1,42 +1,31 @@
-"""Running a plugged benchmark's units, without importing its simulator.
+"""Running the benchmark's commands as subprocesses and reading back what they wrote.
 
-The ABI splits a benchmark in two: a pure half the orchestrator calls directly, and command builders
-that return an **argv**. This module is the other end of the second half - it takes `run_command`'s
-argv, runs it, and turns what it wrote back into an `Outcome` a duel scores.
-
-Three properties it holds, each the reason for a piece of the code below:
-
-- **Nothing here imports the benchmark's simulator.** The plugin object is a pure Python object;
-  everything needing SAPIEN, assets or a GPU happens in the subprocess.
-- **A unit that goes wrong is void, not fatal.** A subprocess that cannot start, crashes, times out,
-  writes no `result.json`, or writes something unreadable produces a void unit with the reason on
-  it, and the next unit still runs. Whether too many voids invalidate the duel is scoring's call
-  (`max_void_fraction`), not this module's.
-- **The benchmark says what happened; the orchestrator decides what it means.** `read_result` is
-  read for the fields the ABI promises, anything missing takes a default rather than raising, and
-  what else the benchmark reported is kept aside in `Outcome.extra`.
+- **Nothing here imports the simulator**: everything needing it happens in the subprocess.
+- **A unit that goes wrong is void, not fatal**: a command that cannot start, crashes, times out,
+  stalls or writes an unreadable result gives a void unit with the reason on it.
+- **The benchmark says what happened; the orchestrator decides what it means**: the result's
+  fields are read with defaults, and what else it reported is kept in `Outcome.extra`.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import os
 import signal
 import subprocess
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .api import EVALUATION_CLIP, RESULT_FILE
+from .robotwin import EVALUATION_CLIP, RESULT_FILE
 
 log = logging.getLogger(__name__)
 
 #: What a result file is read for; the rest is the benchmark's own business, kept in `extra`.
-RESULT_FIELDS = ("success", "void", "steps", "error", "progress", "metric")
+RESULT_FIELDS = ("success", "void", "steps", "error")
 
 #: The subprocess's stdout and stderr, in its `out_dir`. Never published: a run log.
 LOG_FILE = "benchmark.log"
@@ -54,10 +43,6 @@ ENV_ALLOW = frozenset(
     {
         "ROBOTWIN_BENCH_PYTHON",
         "ROBOTWIN_BENCH_DENOISER",
-        # What those two were called before the competitions were named; the benchmark still
-        # reads them, so a host that sets the old name keeps working.
-        "ROBOTWIN_ICIL_PYTHON",
-        "ROBOTWIN_ICIL_DENOISER",
         "PATH",
         "HOME",
         "USER",
@@ -120,15 +105,13 @@ class Outcome:
     steps: int | None
     error: str | None
     wall_s: float = 0.0
-    progress: float | None = None
-    metric: float | None = None
     #: The rollout clip the command wrote, when it wrote a non-empty one.
     clip: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
 def outcome_from(result: Mapping[str, Any], *, wall_s: float = 0.0) -> Outcome:
-    """Read a plugin's `read_result` mapping.
+    """Read the benchmark's `read_result` mapping.
 
     `success is None` exactly when the unit is void - the ABI says so, and the two disagreeing is
     the kind of thing that turns into a wrong score rather than an error, so it is reconciled here
@@ -149,8 +132,6 @@ def outcome_from(result: Mapping[str, Any], *, wall_s: float = 0.0) -> Outcome:
         steps=_int_or_none(result.get("steps")),
         error=error,
         wall_s=wall_s,
-        progress=_float_or_none(result.get("progress")),
-        metric=_float_or_none(result.get("metric")),
         extra={k: v for k, v in result.items() if k not in RESULT_FIELDS},
     )
 
@@ -169,24 +150,8 @@ def _int_or_none(value: Any) -> int | None:
     return int(value) if _finite(value) else None
 
 
-def _float_or_none(value: Any) -> float | None:
-    return float(value) if _finite(value) else None
-
-
 def _str_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
-
-
-def read_result_file(out_dir: str | Path, name: str = RESULT_FILE) -> dict[str, Any]:
-    """The conventional `read_result` for a benchmark that writes one JSON file."""
-    path = Path(out_dir) / name
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        doc = None
-    if not isinstance(doc, dict):
-        return {"success": None, "void": True, "steps": None, "error": f"unreadable {path.name}"}
-    return doc
 
 
 @dataclass
@@ -413,7 +378,7 @@ def run_unit(
             **dict(extra or {}),
         )
         argv = [str(a) for a in built]
-    except Exception as exc:  # noqa: BLE001 - a plugin's own failure is this unit's, not the duel's
+    except Exception as exc:  # noqa: BLE001 - the command's failure is this unit's, not the duel's
         return void(f"run_command failed: {type(exc).__name__}: {exc}")
     if not argv:
         return void("run_command returned an empty argv")
@@ -472,46 +437,3 @@ def run_unit(
     if clip.is_file() and clip.stat().st_size > 0:
         outcome.clip = str(clip)
     return outcome
-
-
-def run_units(
-    benchmark: Any,
-    units: Iterable[Mapping[str, Any]],
-    *,
-    work_root: str | Path,
-    policy_address: str,
-    authkey_env: str,
-    timeout_s: float,
-    env: Mapping[str, str] | None = None,
-    prompt_of: Callable[[Mapping[str, Any]], str | None] = lambda unit: unit.get("prompt"),
-    on_outcome: Callable[[Mapping[str, Any], Outcome], None] | None = None,
-    deadline: float | None = None,
-) -> list[Outcome]:
-    """Every unit in order, each in `work_root/<unit_id>`. A void unit is recorded and the next one
-    runs; `on_outcome` sees each as it finishes, so progress can be reported and persisted.
-
-    `deadline` is the side's wall clock (a `time.monotonic()` value, from
-    `budgets.side_wall_seconds`): a unit not started by then is void as timed out, not run.
-    """
-    name = str(getattr(benchmark, "id", "benchmark"))
-    outcomes: list[Outcome] = []
-    for unit in units:
-        if deadline is not None and time.monotonic() >= deadline:
-            outcome = voided(f"{name}: the side ran out of its wall-clock budget")
-        else:
-            outcome = run_unit(
-                benchmark,
-                unit,
-                prompt=prompt_of(unit),
-                out_dir=Path(work_root) / str(unit["unit_id"]),
-                policy_address=policy_address,
-                authkey_env=authkey_env,
-                timeout_s=timeout_s,
-                env=env,
-            )
-        if outcome.void:
-            log.warning("unit %s void: %s", unit["unit_id"], outcome.error)
-        if on_outcome is not None:
-            on_outcome(unit, outcome)
-        outcomes.append(outcome)
-    return outcomes

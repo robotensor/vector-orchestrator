@@ -1,21 +1,13 @@
 """What a killed orchestrator left running, found and ended before a unit runs again.
 
 `SIGTERM` and `SIGINT` tear a unit down on the way out (see `cli`), but `SIGKILL`, the OOM killer
-or a lost machine run no `finally`. What survives them:
-
-- the benchmark subprocess's process group and the local runtime's policy server, which run in
-  sessions of their own and so outlive the orchestrator;
-- a policy container, which Docker keeps running whoever started it.
-
-So every process group a unit starts is written, while it runs, to a ledger in the directory it
-runs in (`pids.json`: the unit's, a prompt's, a side's health check), and every policy container
-carries the sandbox's labels naming the process that started it (`submissions.container.Owner`).
-On start, holding the store's lock so that nothing of this store's can still be running on
-purpose, the orchestrator reaps both (`Orchestrator.reap_orphans`): the ledgers of its undecided
-duels, and every policy container whose owner is gone (`submissions.container.reap_orphans`,
-which each container's start also runs). `run_side` also reaps a unit's own ledger
-before it plays a unit that has no result, and moves what that interrupted attempt left aside as
-`<unit_id>.interrupted-<n>`, so nothing an orphan wrote is ever read as the unit's result.
+or a lost machine run no `finally`, and the benchmark subprocess and the policy server run in
+sessions of their own, so they outlive the orchestrator. So every process group a unit starts is
+written, while it runs, to a ledger in the directory it runs in (`pids.json`). On start, holding
+the store's lock, the orchestrator reaps the ledgers of its undecided duels
+(`Orchestrator.reap_orphans`), and `run_side` reaps a unit's own ledger before it plays a unit that
+has no result, moving what that attempt left aside as `<unit_id>.interrupted-<n>`, so nothing an
+orphan wrote is ever read as the unit's result.
 
 A process group is killed only while it is still the one recorded - the same boot, and a leader
 that started when the ledger says it did (field 22 of `/proc/<pid>/stat`, since a pid is reused),
@@ -169,7 +161,7 @@ def reap_run_root(run_root: Path, *, decided: str = "outcome.json") -> list[int]
     killed: list[int] = []
     if not Path(run_root).is_dir():
         return killed
-    for duel_dir in sorted(Path(run_root).glob("*/*")):
+    for duel_dir in sorted(Path(run_root).glob("*")):
         if not duel_dir.is_dir() or (duel_dir / decided).exists():
             continue
         for path in sorted(duel_dir.rglob(LEDGER_FILE)):

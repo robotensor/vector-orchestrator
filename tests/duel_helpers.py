@@ -1,19 +1,16 @@
 """What the duel tests share: the example policies, a runtime with faults, a recording reporter,
-a benchmark that voids chosen units for the harness, and a `FakeDocker` that answers `inspect`."""
+and a benchmark that voids chosen units for the harness."""
 
 from __future__ import annotations
 
 import os
 import signal
-from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from submission_helpers import FakeDocker
-from vector_orchestrator.duel.local_runtime import SubprocessPolicyRuntime
+from vector_orchestrator.duel.runtime import SubprocessPolicyRuntime
 from vector_orchestrator.ids import SubmissionRef
 from vector_orchestrator.live import LiveReporter
-from vector_orchestrator.submissions.docker import DockerTimeout
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "vector-protocol" / "examples"
 REPLAY = EXAMPLES / "replay_policy"
@@ -108,41 +105,11 @@ def harness_voiding(units: set[str], side: str = "challenger"):
     return HarnessVoiding()
 
 
-@dataclass
-class InspectingFakeDocker(FakeDocker):
-    """`FakeDocker`, whose `state` says which containers the kernel killed for their memory limit,
-    and whose `docker inspect` of the containers in `hang` does not finish, as a Docker too busy to
-    answer: `state` raises the `DockerTimeout` the real client raises then."""
-
-    #: Containers the kernel killed for their memory limit.
-    oom_killed: set[str] = field(default_factory=set)
-    #: Containers `docker inspect` does not answer about.
-    hang: set[str] = field(default_factory=set)
-    #: Whether the next `run`'s container hangs `docker inspect` and has its process killed
-    #: before it can listen.
-    hang_next_run: bool = False
-
-    def run(self, args, *, env=None):
-        started = super().run(args, env=env)
-        if self.hang_next_run:
-            self.hang_next_run = False
-            name = args[args.index("--name") + 1]
-            self.hang.add(name)
-            self.processes[name].kill()
-            self.processes[name].wait()
-        return started
-
-    def state(self, name):
-        if name in self.hang:
-            raise DockerTimeout("inspect", 60.0)
-        return replace(super().state(name), oom_killed=name in self.oom_killed)
-
-
 class RecordingReporter(LiveReporter):
     """Every frame a duel builds, kept rather than posted."""
 
-    def __init__(self, spec: Any) -> None:
-        super().__init__(spec, None, None)
+    def __init__(self, spec: Any = None) -> None:
+        super().__init__(None, None)
         self.frames: list[dict[str, Any]] = []
 
     @property

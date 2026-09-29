@@ -9,10 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import fake_spec_doc
 from duel_helpers import REPLAY_REF, ZERO_REF, Crash, FakePolicyRuntime
-from vector_orchestrator.benchmarks.subprocess_runner import Outcome, voided
-from vector_orchestrator.benchmarks.units import plugin_units
 from vector_orchestrator.duel.materialize import materialize_units
 from vector_orchestrator.duel.runtime import (
     HARNESS,
@@ -22,25 +19,25 @@ from vector_orchestrator.duel.runtime import (
     RuntimeUnavailable,
 )
 from vector_orchestrator.duel.side import RESULTS_FILE, attribute, read_results, run_side
-
-TRACK = "franka_1arm"
-
-
-@pytest.fixture
-def fake(fake_installed):
-    import vector_fake_benchmark
-
-    return vector_fake_benchmark.BENCHMARK
+from vector_orchestrator.runner import Outcome, voided
+from vector_orchestrator.units import deal
 
 
 @pytest.fixture
-def units(duel_spec, fake):
-    return plugin_units(duel_spec, TRACK, "e" * 64, "smoke", resolve=lambda name: fake)
+def fake(fake_benchmark):
+    return fake_benchmark
+
+
+@pytest.fixture
+def units(duel_spec):
+    """Three units: the first run of both tasks and the second of the first."""
+    dealt = deal(duel_spec, "e" * 64, None, 2)
+    return [dealt[0], dealt[2], dealt[1]]
 
 
 @pytest.fixture
 def prompts(duel_spec, fake, units, tmp_path):
-    return materialize_units(duel_spec, units, tmp_path / "prompts", benchmark_of=lambda u: fake)
+    return materialize_units(duel_spec, units, tmp_path / "prompts", benchmark=fake)
 
 
 def side(duel_spec, fake, units, prompts, tmp_path, runtime, ref=REPLAY_REF, **kwargs):
@@ -54,7 +51,7 @@ def side(duel_spec, fake, units, prompts, tmp_path, runtime, ref=REPLAY_REF, **k
         units=units,
         prompts=prompts,
         side_dir=tmp_path / "challenger",
-        benchmark_of=lambda unit: fake,
+        benchmark=fake,
         runtime=runtime,
         prepared=prepared,
         **kwargs,
@@ -152,7 +149,7 @@ def test_a_policy_that_never_listens_fails_and_a_runtime_that_cannot_serve_voids
             if unit == units[0]["unit_id"]:
                 raise PolicyDied("the policy did not listen within 600s")
             if unit == units[1]["unit_id"]:
-                raise RuntimeUnavailable("docker is not running")
+                raise RuntimeUnavailable("the policy server could not be started")
             return super().serve(prepared, workdir=workdir)
 
     results = side(duel_spec, fake, units, prompts, tmp_path, Flaky(duel_spec))
@@ -160,7 +157,7 @@ def test_a_policy_that_never_listens_fails_and_a_runtime_that_cannot_serve_voids
     assert (never["success"], never["void"]) == (False, False)
     assert "did not listen" in never["error"]
     assert (unserved["success"], unserved["void"]) == (None, True)
-    assert "docker is not running" in unserved["error"]
+    assert "the policy server could not be started" in unserved["error"]
     assert fine["success"] is True
 
 
@@ -204,7 +201,7 @@ def test_a_refused_submission_fails_every_unit_with_the_reason_and_serves_nothin
 
 def test_a_unit_without_a_prompt_is_void_and_the_others_run(duel_spec, fake, units, tmp_path):
     units[0]["fake_materialize"] = "crash"
-    prompts = materialize_units(duel_spec, units, tmp_path / "prompts", benchmark_of=lambda u: fake)
+    prompts = materialize_units(duel_spec, units, tmp_path / "prompts", benchmark=fake)
     runtime = FakePolicyRuntime(duel_spec)
     results = side(duel_spec, fake, units, prompts, tmp_path, runtime)
     bad = results[units[0]["unit_id"]]
@@ -298,7 +295,7 @@ def test_a_unit_the_benchmark_says_ran_from_another_prompt_is_void(
         units=units,
         prompts=prompts,
         side_dir=tmp_path / "challenger",
-        benchmark_of=lambda unit: misreading,
+        benchmark=misreading,
         runtime=runtime,
         prepared=runtime.prepare(
             runtime.fetch(REPLAY_REF, workdir=tmp_path), workdir=tmp_path / "check"
@@ -329,7 +326,7 @@ def test_starting_the_policy_is_taken_from_its_units_budget_and_counted_in_its_w
             return super().serve(prepared, workdir=workdir)
 
     results = side(duel_spec, fake, units[:1], prompts, tmp_path, SlowStart(duel_spec))
-    budget = float(duel_spec.budgets["unit_wall_seconds"])
+    budget = float(duel_spec.budgets["unit"])
     assert timeouts[0] <= budget - 2.0, "starting the policy was not taken from the unit's budget"
     assert results[units[0]["unit_id"]]["wall_s"] >= 2.0, "the wall time left out the start"
 
@@ -377,8 +374,8 @@ def test_a_unit_whose_harness_runs_long_is_written_void_before_its_benchmark_is_
 ):
     """Told the seconds its subprocess has (`unit_timeout_s`), the benchmark stops calling the
     policy in time to write a harness void, rather than being killed with nothing written."""
-    doc = fake_spec_doc(spec_doc)
-    doc["budgets"].update(act_timeout_s=2.0, unit_wall_seconds=6.0, policy_budget_seconds=3.0)
+    doc = {**spec_doc, "tasks": ["place_cube_plate", "stack_two_blocks"]}
+    doc["budgets"] = {**doc["budgets"], "act": 2.0, "unit": 6.0, "policy": 3.0}
     short = write_spec(doc, name="short-unit-spec.json")
     units[0]["fake_step_s"] = 2.0  # a simulator far slower than its unit allows
     results = side(short, fake, units[:1], prompts, tmp_path, FakePolicyRuntime(short))
@@ -419,8 +416,8 @@ def test_a_slow_policy_that_uses_up_its_budget_fails_its_unit_rather_than_voidin
     from vector_orchestrator.ids import SubmissionRef
 
     slow = SubmissionRef.make("org/slow-policy", "6" * 40)
-    doc = fake_spec_doc(spec_doc)
-    doc["budgets"].update(act_timeout_s=2.0, policy_budget_seconds=3.0)
+    doc = {**spec_doc, "tasks": ["place_cube_plate", "stack_two_blocks"]}
+    doc["budgets"] = {**doc["budgets"], "act": 2.0, "policy": 3.0}
     small = write_spec(doc, name="small-budget-spec.json")
     runtime = FakePolicyRuntime(small, {slow.repo: slow_policy(tmp_path / "slow", act_s=1.0)})
     results = side(small, fake, units[:1], prompts, tmp_path, runtime, ref=slow)
@@ -428,15 +425,15 @@ def test_a_slow_policy_that_uses_up_its_budget_fails_its_unit_rather_than_voidin
     assert (record["success"], record["void"]) == (False, False), record["error"]
     assert "its whole budget of" in record["error"]
     limits = given(tmp_path, units[0]["unit_id"])
-    reserve = fake.info()["limits"]["result_reserve_s"]
+    reserve = fake.result_reserve_s
     assert 0 < limits["policy_budget_s"] < 3.0 < limits["unit_timeout_s"] - reserve
 
 
 def test_a_policy_that_takes_its_whole_budget_to_start_fails_its_unit_unplayed(
     spec_doc, write_spec, fake, units, prompts, tmp_path
 ):
-    doc = fake_spec_doc(spec_doc)
-    doc["budgets"].update(act_timeout_s=2.0, policy_budget_seconds=1.0)
+    doc = {**spec_doc, "tasks": ["place_cube_plate", "stack_two_blocks"]}
+    doc["budgets"] = {**doc["budgets"], "act": 2.0, "policy": 1.0}
     tiny = write_spec(doc, name="tiny-budget-spec.json")
 
     class SlowStart(FakePolicyRuntime):
@@ -497,7 +494,7 @@ def test_a_prompt_sha256_the_benchmark_reports_that_is_not_the_recorded_hash_voi
         units=units[:1],
         prompts=prompts,
         side_dir=tmp_path / "challenger",
-        benchmark_of=lambda unit: misreporting,
+        benchmark=misreporting,
         runtime=runtime,
         prepared=runtime.prepare(
             runtime.fetch(REPLAY_REF, workdir=tmp_path), workdir=tmp_path / "check"

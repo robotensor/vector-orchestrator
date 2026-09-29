@@ -1,6 +1,5 @@
 """The committed fixture store is what the orchestrator writes today, holds together, and reads
-the way the dashboard's `lib/store.ts` (robotensor/robotensor-competition-dashboard,
-milestone-two-contests) reads a store."""
+the way the dashboard reads a store."""
 
 from __future__ import annotations
 
@@ -39,40 +38,19 @@ def test_the_fixture_store_holds_together_under_the_shipped_spec(spec):
 
 
 def test_the_dashboard_can_read_the_fixture_store(spec):
-    track = "franka_1arm"
-    manifest = json.loads((STORE / "manifest.json").read_text())
-    assert manifest["tracks"] == [track] and manifest["schema"] == spec.store["schema"]
-
-    head = json.loads((STORE / "tracks" / track / "head.json").read_text())
-    # indexRecords: parts are probed from 0 up to floor(seq / per) + 1.
-    per = spec.store["index_lines_per_part"]
-    assert isinstance(head["seq"], int) and head["seq"] // per + 1 >= 1
-
-    records = []
-    for line in (STORE / "tracks" / track / "index-0000.jsonl").read_text().split("\n"):
-        if not line.strip():
-            continue
-        record = json.loads(line)
-        # parseIndexPart keeps a record only with a numeric seq and string event_id and kind.
-        assert isinstance(record["seq"], int) and isinstance(record["event_id"], str)
-        assert isinstance(record["kind"], str)
-        records.append(record)
+    head = json.loads((STORE / "head.json").read_text())
+    records = [json.loads(line) for line in (STORE / "index-0000.jsonl").read_text().splitlines()]
     assert [r["kind"] for r in records] == ["genesis", "duel"]
-
     duel = records[-1]
-    assert duel["dethroned"] and duel["new_king"]["repo"] == "robotensor/vector-replay-policy"
-    assert head["king"] == duel["new_king"]
+    assert duel["dethroned"] and head["king"] == duel["challenger"]
     for record in records:
         assert EVENT_ID.match(record["event_id"])
-        event = json.loads((STORE / "events" / track / f"{record['event_id']}.json").read_text())
-        assert isinstance(event["units"], list)
-        # A unit whose skill the spec does not name is silently dropped by the dashboard.
-        assert {u["skill"] for u in event["units"]} <= set(spec.skills(track))
-    duel_event = json.loads((STORE / "events" / track / f"{duel['event_id']}.json").read_text())
-    assert len(duel_event["units"]) == spec.units_per_side(track, "light")
+        event = json.loads((STORE / "events" / f"{record['event_id']}.json").read_text())
+        # A unit is shown under its task, which must be one the spec names.
+        assert {u["task"] for u in event["units"]} == set(spec.tasks)
+        assert set(event["scores"]["king"]) == {"average", *spec.tasks}
+    duel_event = json.loads((STORE / "events" / f"{duel['event_id']}.json").read_text())
+    assert len(duel_event["units"]) == 2 * len(spec.tasks)
     assert sum(u["void"] for u in duel_event["units"]) == duel["void"] == 1
-
-    queue = json.loads((STORE / "tracks" / track / "queue.json").read_text())
-    assert [(e["repo"], e["position"]) for e in queue["entries"]] == [
-        ("robotensor/vector-example-policy", 1)
-    ]
+    queue = json.loads((STORE / "queue.json").read_text())
+    assert [e["repo"] for e in queue["entries"]] == ["robotensor/vector-example-policy"]

@@ -22,7 +22,6 @@ from duel_helpers import REPLAY
 from vector_orchestrator.cli import main
 from vector_orchestrator.ids import SubmissionRef
 
-TRACK = "franka_1arm"
 SLOW_REF = SubmissionRef.make("org/slow-policy", "8" * 40)
 #: Per `act`: a unit of five acts takes a few seconds, under the duel spec's 2s act timeout.
 SLOW_ACT_S = 0.6
@@ -84,10 +83,6 @@ def duel_args(spec, tmp_path: Path, slow: Path) -> list[str]:
         str(tmp_path / "store"),
         "--run-dir",
         str(tmp_path / "runs"),
-        "--queue",
-        str(tmp_path / "queue"),
-        "--runtime",
-        "local",
         "--local",
         f"{SLOW_REF.repo}={slow}",
     ]
@@ -95,7 +90,7 @@ def duel_args(spec, tmp_path: Path, slow: Path) -> list[str]:
 
 def start_duel(spec, tmp_path: Path, slow: Path) -> subprocess.Popen:
     root = tmp_path / "store"
-    assert main(["--spec", str(spec.path), "store", "init", str(root)]) == 0
+    assert main(["--spec", str(spec.path), "store", "init", "--root", str(root)]) == 0
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(FAKE_SITE), *sys.path])}
     argv = [sys.executable, "-m", "vector_fake_cli", *duel_args(spec, tmp_path, slow)]
     log = open(tmp_path / "duel.log", "wb")  # noqa: SIM115 - the child writes it until it exits
@@ -107,7 +102,7 @@ def mid_unit(process: subprocess.Popen, tmp_path: Path, slow: Path) -> tuple[int
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         assert process.poll() is None, (tmp_path / "duel.log").read_text()
-        started = sorted((tmp_path / "runs").glob(f"{TRACK}/*/challenger/*/runs.log"))
+        started = sorted((tmp_path / "runs").glob("*/challenger/*/runs.log"))
         policies = processes_running(str(slow / "policy.yaml"))
         if started and policies and started[0].read_text().strip():
             return int(started[0].read_text().split()[0]), policies
@@ -125,7 +120,7 @@ def reap(pids: list[int]) -> None:
 
 @pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
 def test_a_signal_tears_down_the_units_policy_and_benchmark_before_the_duel_exits(
-    duel_spec, fake_installed, tmp_path, slow_policy, signum
+    duel_spec, fake_module, tmp_path, slow_policy, signum
 ):
     process = start_duel(duel_spec, tmp_path, slow_policy)
     benchmark, policies = [], []
@@ -147,7 +142,7 @@ def test_a_signal_tears_down_the_units_policy_and_benchmark_before_the_duel_exit
 
 
 def test_what_a_duel_killed_outright_left_is_reaped_before_its_unit_runs_again(
-    duel_spec, fake_installed, tmp_path, monkeypatch, capsys
+    duel_spec, fake_module, tmp_path, monkeypatch, capsys
 ):
     """SIGKILL runs no teardown. The next start ends the orphans first - while they are still
     playing the unit - and the unit runs again in a directory of its own."""
@@ -165,7 +160,7 @@ def test_what_a_duel_killed_outright_left_is_reaped_before_its_unit_runs_again(
         left = [benchmark, *policies]
         process.kill()
         process.wait(timeout=30)
-        unit_dir = sorted((tmp_path / "runs").glob(f"{TRACK}/*/challenger/*/runs.log"))[0].parent
+        unit_dir = sorted((tmp_path / "runs").glob("*/challenger/*/runs.log"))[0].parent
         assert all(alive(pid) for pid in left), "the kill orphaned nothing to reap"
 
         reap_orphans = Orchestrator.reap_orphans
@@ -178,6 +173,10 @@ def test_what_a_duel_killed_outright_left_is_reaped_before_its_unit_runs_again(
             return reaped
 
         monkeypatch.setattr(Orchestrator, "reap_orphans", reaping)
+        monkeypatch.setattr(
+            "vector_orchestrator.robotwin.RoboTwin.from_environment",
+            classmethod(lambda cls, level, environ=None: fake_module.FakeBenchmark()),
+        )
         assert main(duel_args(duel_spec, tmp_path, slow)) == 0, capsys.readouterr().err
     finally:
         reap([pid for pid in left if alive(pid)])

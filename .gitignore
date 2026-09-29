@@ -9,9 +9,7 @@ build/
 /runs/
 /store/
 /work/
-# `queue` keeps its files here: local state, never committed.
-/queue/
-# `submission check` keeps checkouts here, one directory per commit sha.
+# Downloaded weights, one directory per commit sha.
 /cache/
 *.mp4
 *.npz

@@ -10,14 +10,14 @@ import pytest
 
 from duel_helpers import REPLAY, REPLAY_REF, ZERO, FakePolicyRuntime
 from submission_helpers import write_policy_repo
-from vector_orchestrator.duel.local_runtime import SubprocessPolicyRuntime, tree_hash
 from vector_orchestrator.duel.runtime import (
     POLICY,
     PolicyDied,
-    PolicyRuntime,
     RuntimeUnavailable,
     SubmissionRefused,
+    SubprocessPolicyRuntime,
     mirror_log,
+    tree_hash,
 )
 
 
@@ -26,10 +26,6 @@ def runtime(spec):
     return SubprocessPolicyRuntime(
         spec, {"org/replay": REPLAY, "org/zero": ZERO}, start_timeout_s=30
     )
-
-
-def test_the_subprocess_runtime_is_a_policy_runtime(runtime):
-    assert isinstance(runtime, PolicyRuntime) and runtime.name == "local"
 
 
 def eventually(check, within_s: float = 5.0) -> bool:
@@ -78,14 +74,7 @@ def test_prepare_checks_the_manifest_and_says_hello(runtime, tmp_path):
     fetched = runtime.fetch(ref, workdir=tmp_path)
     assert fetched.commit == "a" * 40 and fetched.root == REPLAY.resolve()
     prepared = runtime.prepare(fetched, workdir=tmp_path / "check")
-    assert prepared.policy == "replay.policy:ReplayPolicy" and prepared.action_type == "qpos"
-    assert prepared.as_side() == {
-        "commit": "a" * 40,
-        "base_image_digest": None,
-        "image": None,
-        "policy": "replay.policy:ReplayPolicy",
-        "action_type": "qpos",
-    }
+    assert prepared.commit == "a" * 40 and prepared.weights_sha256 is None
     assert "listening" in (tmp_path / "check" / "policy.log").read_text()
 
 

@@ -3,7 +3,6 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 from conftest import FAKE_SITE
 
@@ -14,54 +13,39 @@ FORBIDDEN = {"sapien", "mujoco", "robosuite", "torch", "curobo", "vector_fake_si
 
 def test_the_package_imports_no_simulator():
     before = set(sys.modules)
-    importlib.import_module("vector_orchestrator")
+    for name in (
+        "vector_orchestrator",
+        "vector_orchestrator.cli",
+        "vector_orchestrator.duel.orchestrate",
+    ):
+        importlib.import_module(name)
     loaded = {name.split(".")[0] for name in set(sys.modules) - before}
     assert not loaded & FORBIDDEN
 
 
 PROBE = """
 import json, sys
-import vector_orchestrator.benchmarks
 import vector_fake_benchmark
-from vector_orchestrator.benchmarks import drivers
-from vector_orchestrator.benchmarks.check import check_benchmark
-from vector_orchestrator.benchmarks.units import plugin_units
 from vector_orchestrator.spec import load_spec_file
+from vector_orchestrator.units import deal
 
-drivers.DRIVERS["fake"] = lambda pin: vector_fake_benchmark.BENCHMARK
 spec = load_spec_file(sys.argv[1])
-report = check_benchmark(spec, "fake")
-units = plugin_units(spec, "franka_1arm", "d" * 64, "smoke")
-print(json.dumps({
-    "ok": report.ok,
-    "units": len(units),
-    "modules": sorted({m.split(".")[0] for m in sys.modules}),
-}))
+fake = vector_fake_benchmark.FakeBenchmark()
+fake.prepare(spec.tasks)
+units = deal(spec, "d" * 64)
+commands = [fake.materialize_command(unit=u, out_dir="/tmp/x") for u in units]
+print(json.dumps({"units": len(units), "modules": sorted({m.split(".")[0] for m in sys.modules})}))
 """
 
 
-def test_importing_and_driving_the_benchmarks_package_loads_no_simulator(fake_spec):
-    """With the fake benchmark registered, importing `vector_orchestrator.benchmarks`, finding the
-    benchmark, checking it and deriving a duel's units - in a fresh interpreter - imports neither a
-    real simulator stack nor the fake benchmark's stand-in for one."""
+def test_dealing_and_driving_the_benchmark_loads_no_simulator(duel_spec):
     done = subprocess.run(
-        [sys.executable, "-c", PROBE, str(fake_spec.path)],
+        [sys.executable, "-c", PROBE, str(duel_spec.path)],
         capture_output=True,
         text=True,
         env={**os.environ, "PYTHONPATH": str(FAKE_SITE)},
         check=True,
     )
     probe = json.loads(done.stdout)
-    assert probe["ok"] and probe["units"] == 3
-    assert "vector_fake_benchmark" in probe["modules"], "the benchmark was not really driven"
+    assert probe["units"] == 4 and "vector_fake_benchmark" in probe["modules"]
     assert not set(probe["modules"]) & FORBIDDEN
-
-
-def test_the_local_state_a_run_writes_is_git_ignored():
-    """`queue` writes into the checkout by default; its files are an operator's, not the
-    repository's."""
-    root = Path(__file__).resolve().parents[1]
-    ignored = {
-        line.strip() for line in (root / ".gitignore").read_text().splitlines() if line.strip()
-    }
-    assert "/queue/" in ignored

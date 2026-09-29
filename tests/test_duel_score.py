@@ -1,4 +1,4 @@
-"""The crown rule, ported from icilval with its tests, over the spec's own skills."""
+"""The crown rule, over tasks each scored on its own."""
 
 from __future__ import annotations
 
@@ -6,21 +6,21 @@ from vector_orchestrator.duel.score import (
     SCORE_EPSILON,
     crown_moves,
     paired_outcome,
-    skill_scores,
     tally,
+    task_scores,
     too_void,
     verdict,
     void_fraction,
 )
-from vector_orchestrator.store.records import unit_tally
+from vector_orchestrator.store.records import tally as record_tally
 
-SKILLS = ("franka_pick_and_place", "franka_stacking")
+TASKS = ("place_cube_plate", "stack_two_blocks")
 
 
-def unit(skill, k, c, void=False, i=0):
+def unit(task, k, c, void=False, i=0):
     return {
-        "unit_id": f"{skill[7:9]}-{i:03d}",
-        "skill": skill,
+        "unit_id": f"{task}-{i:02d}",
+        "task": task,
         "king_success": k,
         "challenger_success": c,
         "outcome": paired_outcome(k, c),
@@ -36,18 +36,18 @@ def test_paired_outcome():
     assert paired_outcome(None, True) == "tie"
 
 
-def test_skill_scores_are_fractions_that_exclude_void_units():
+def test_task_scores_are_fractions_that_exclude_void_units():
     units = [
-        unit("franka_pick_and_place", True, False),
-        unit("franka_pick_and_place", True, True, void=True),
-        unit("franka_pick_and_place", False, True),
+        unit("place_cube_plate", True, False),
+        unit("place_cube_plate", True, True, void=True),
+        unit("place_cube_plate", False, True),
     ]
-    k = skill_scores(units, "king", SKILLS)
-    c = skill_scores(units, "challenger", SKILLS)
-    assert k["franka_pick_and_place"] == 0.5 and c["franka_pick_and_place"] == 0.5
-    assert k["franka_stacking"] is None
+    k = task_scores(units, "king", TASKS)
+    c = task_scores(units, "challenger", TASKS)
+    assert k["place_cube_plate"] == 0.5 and c["place_cube_plate"] == 0.5
+    assert k["stack_two_blocks"] is None
     assert k["average"] == 0.5 and c["average"] == 0.5
-    assert list(k) == [*SKILLS, "average"]
+    assert list(k) == ["average", *TASKS]
 
 
 def test_the_crown_rule_at_its_boundary():
@@ -59,38 +59,50 @@ def test_the_crown_rule_at_its_boundary():
     assert SCORE_EPSILON < 1e-6
 
 
-def test_the_average_is_over_skills_and_the_margin_decides(spec):
-    skills = spec.skills("franka_1arm")
+def test_the_average_is_over_tasks_and_the_margin_decides(spec):
+    tasks = spec.tasks[:3]
     units, i = [], 0
-    for skill, (kw, cw) in zip(skills, [(6, 8), (3, 4), (0, 0)], strict=True):
+    for task, (kw, cw) in zip(tasks, [(6, 8), (3, 4), (0, 0)], strict=True):
         for n in range(10):
-            units.append(unit(skill, n < kw, n < cw, i=i))
+            units.append(unit(task, n < kw, n < cw, i=i))
             i += 1
-    v = verdict(units, spec.score_margin("franka_1arm"), skills)
+    v = verdict(units, spec.margin, tasks)
     assert v.king_scores["average"] == (0.6 + 0.3 + 0.0) / 3
     assert v.challenger_scores["average"] == (0.8 + 0.4 + 0.0) / 3
     assert v.dethroned and v.reason == "margin-met"
     assert round(v.delta_points, 6) == 10.0
     assert (v.tally.wins, v.tally.losses, v.tally.decided, v.tally.ties) == (3, 0, 3, 27)
-    assert v.tally.as_dict() == unit_tally(units), "the record's tally is the scorer's"
+    assert v.tally.as_dict() == record_tally(units), "the record's tally is the scorer's"
 
 
 def test_a_copy_of_the_king_never_moves_the_crown():
-    units = [unit(s, n % 2 == 0, n % 2 == 0, i=n) for s in SKILLS for n in range(6)]
-    v = verdict(units, 3.0, SKILLS)
+    units = [unit(s, n % 2 == 0, n % 2 == 0, i=n) for s in TASKS for n in range(6)]
+    v = verdict(units, 3.0, TASKS)
     assert v.delta_points == 0.0 and not v.dethroned and v.reason == "short-of-margin"
-    assert verdict(units, 0.0, SKILLS).dethroned, "a zero margin crowns an equal challenger"
+    assert verdict(units, 0.0, TASKS).dethroned, "a zero margin crowns an equal challenger"
 
 
 def test_void_fraction_is_over_every_unit_and_only_above_the_limit_is_too_void():
-    units = [unit("franka_stacking", True, True, void=n < 2, i=n) for n in range(10)]
+    units = [unit("stack_two_blocks", True, True, void=n < 2, i=n) for n in range(10)]
     assert void_fraction(units) == 0.2 and void_fraction([]) == 0.0
     assert not too_void(units, 0.2) and too_void(units, 0.19)
     assert tally(units).void == 2
 
 
 def test_an_unscored_duel_does_not_move_the_crown():
-    units = [unit("franka_stacking", None, None, void=True)]
-    v = verdict(units, 3.0, SKILLS)
+    units = [unit("stack_two_blocks", None, None, void=True)]
+    v = verdict(units, 3.0, TASKS)
     assert v.reason == "unscored" and not v.dethroned and v.void_fraction == 1.0
-    assert verdict([], 3.0, SKILLS).reason == "no-units"
+    assert verdict([], 3.0, TASKS).reason == "no-units"
+
+
+def test_the_sign_test_holds_back_a_margin_met_on_a_few_units():
+    units = [
+        unit("place_cube_plate", False, True, i=0),
+        *(unit("place_cube_plate", True, True, i=n) for n in range(1, 10)),
+    ]
+    assert verdict(units, 3.0, TASKS[:1]).dethroned
+    held = verdict(units, 3.0, TASKS[:1], paired_alpha=0.05)
+    assert (
+        not held.dethroned and held.reason == "not-significant" and held.as_dict()["p_value"] == 0.5
+    )

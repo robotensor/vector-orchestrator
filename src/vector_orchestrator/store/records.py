@@ -1,169 +1,90 @@
-"""Constructors for published records. Shapes are formalised in `store-schema.json`,
-and the dashboard reads them field by field (`lib/store.ts`), so a field here is a contract."""
+"""What is published: an index record per duel and its event. The dashboard reads both field by
+field, so a field here is a contract.
+
+A unit row, as a duel keeps it and an event publishes it:
+
+    unit_id, task, scene_seed        the unit, and the scene both sides played
+    prompt_sha256, demo_video        the demonstration both sides ran from, and its clip
+    void, outcome                    void for both sides, or who did better: king, challenger, tie
+    <side>_success, _steps, _video, _error   for side in king, challenger
+"""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-from ..ids import SubmissionRef
+SIDES = ("king", "challenger")
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def ref_dict(ref: SubmissionRef | None) -> dict[str, str] | None:
-    return ref.as_dict() if ref else None
+def unit_row(unit: dict[str, Any]) -> dict[str, Any]:
+    """A unit before either side has run."""
+    row: dict[str, Any] = {
+        "unit_id": unit["unit_id"],
+        "task": unit["task"],
+        "scene_seed": None,
+        "prompt_sha256": None,
+        "demo_video": None,
+        "void": False,
+        "outcome": "tie",
+    }
+    for side in SIDES:
+        row.update(
+            {
+                f"{side}_success": None,
+                f"{side}_steps": None,
+                f"{side}_video": None,
+                f"{side}_error": None,
+            }
+        )
+    return row
+
+
+def tally(units: list[dict[str, Any]]) -> dict[str, int]:
+    """From the challenger's side: a void unit counts only as void, the others by `outcome`."""
+    t = {"wins": 0, "losses": 0, "ties": 0, "void": 0}
+    for u in units:
+        key = (
+            "void"
+            if u.get("void")
+            else {"challenger": "wins", "king": "losses"}.get(u.get("outcome"), "ties")
+        )
+        t[key] += 1
+    return t
 
 
 def index_record(
     *,
-    schema: int,
     event_id: str,
     kind: str,
-    track: str,
     block: int,
     finished_at: str,
-    king: SubmissionRef | None,
-    challenger: SubmissionRef | None,
-    king_scores: dict[str, float | None] | None,
-    challenger_scores: dict[str, float | None] | None,
-    score_margin: float,
+    king: dict[str, str],
+    challenger: dict[str, str] | None,
+    king_score: float | None,
+    challenger_score: float | None,
     dethroned: bool,
-    new_king: SubmissionRef | None,
-    tally: dict[str, int] | None = None,
-    media_count: int = 0,
-    duel_size: str | None = None,
-    duel_id: str | None = None,
+    units: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    t = tally or {"wins": 0, "losses": 0, "ties": 0, "decided": 0, "void": 0}
     return {
-        "schema": schema,
         "seq": 0,  # assigned by the store on append
         "event_id": event_id,
         "kind": kind,
-        "track": track,
         "block": block,
         "finished_at": finished_at,
-        "duel_size": duel_size,
-        "duel_id": duel_id,
-        "king": ref_dict(king),
-        "challenger": ref_dict(challenger),
-        "king_scores": king_scores,
-        "challenger_scores": challenger_scores,
-        "score_margin": score_margin,
+        "king": king,
+        "challenger": challenger,
+        "king_score": king_score,
+        "challenger_score": challenger_score,
         "dethroned": dethroned,
-        "new_king": ref_dict(new_king),
-        "wins": t["wins"],
-        "losses": t["losses"],
-        "ties": t["ties"],
-        "decided": t["decided"],
-        "void": t["void"],
-        "media_count": media_count,
+        **tally(units),
     }
-
-
-def duel_event(
-    record: dict[str, Any],
-    *,
-    spec_version: int,
-    spec_fingerprint: str,
-    units: list[dict[str, Any]],
-    units_per_skill: int,
-    started_at: str,
-    wall_seconds: float,
-    sides: dict[str, Any] | None = None,
-    notes: list[str] | None = None,
-    demonstration: dict[str, Any] | None = None,
-    prompts: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    event = dict(record)
-    event.pop("seq", None)
-    event.update(
-        {
-            "spec_version": spec_version,
-            "spec_fingerprint": spec_fingerprint,
-            "units_per_skill": units_per_skill,
-            "started_at": started_at,
-            "wall_seconds": round(float(wall_seconds), 3),
-            # Per side: the resolved submission commit, the image digest, wall time, errors.
-            "sides": sides or {},
-            # What the track let its policies see of a demonstration, and what it withheld.
-            "demonstration": demonstration or {},
-            # One entry per unit: the sha256 of the prompt both sides ran from. Published with the
-            # event rather than up front, because the demonstration is the answer for its scene.
-            "prompts": prompts or [],
-            "units": units,
-            "notes": notes or [],
-        }
-    )
-    return event
-
-
-def unit_verdict_from_unit(unit: dict[str, Any], view: str | None = None) -> dict[str, Any]:
-    """The published shape of a unit before either side has run."""
-    return {
-        "unit_id": unit["unit_id"],
-        "skill": unit["skill"],
-        "index": unit["index"],
-        "task": unit["task"],
-        "task_label": unit.get("task_label", unit["task"]),
-        "instance": unit["instance"],
-        "seed": unit["seed"],
-        "instance_params": dict(unit.get("instance_params") or {}),
-        "prompt": {
-            "demo_id": unit["demo"],
-            "steps": 0,
-            "chunks": 0,
-            "view": view,
-            "sha256": None,
-        },
-        "demo_video": None,
-        "king_video": None,
-        "challenger_video": None,
-        "king_success": None,
-        "challenger_success": None,
-        "outcome": "tie",
-        "king_progress": None,
-        "challenger_progress": None,
-        "king_metric": None,
-        "challenger_metric": None,
-        "king_steps": None,
-        "challenger_steps": None,
-        "king_error": None,
-        "challenger_error": None,
-        "void": False,
-    }
-
-
-def unit_tally(units: list[dict[str, Any]]) -> dict[str, int]:
-    """What a record's `wins`, `losses`, `ties`, `decided` and `void` count, from the challenger's
-    side: a void unit counts only as void, and a non-void unit by its published `outcome`."""
-    t = {"wins": 0, "losses": 0, "ties": 0, "decided": 0, "void": 0}
-    for u in units:
-        if u.get("void"):
-            t["void"] += 1
-        elif u.get("outcome") == "challenger":
-            t["wins"] += 1
-        elif u.get("outcome") == "king":
-            t["losses"] += 1
-        else:
-            t["ties"] += 1
-    t["decided"] = t["wins"] + t["losses"]
-    return t
 
 
 def media_shas(units: list[dict[str, Any]]) -> list[str]:
-    out: list[str] = []
-    for u in units:
-        for k in ("demo_video", "king_video", "challenger_video"):
-            v = u.get(k)
-            if isinstance(v, str) and v:
-                out.append(v)
-    return sorted(set(out))
-
-
-def empty_skill_scores(skills: Sequence[str]) -> dict[str, float | None]:
-    return {**{s: None for s in skills}, "average": None}
+    shas = {u.get(k) for u in units for k in ("demo_video", "king_video", "challenger_video")}
+    return sorted(s for s in shas if isinstance(s, str) and s)

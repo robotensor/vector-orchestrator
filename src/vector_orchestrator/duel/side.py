@@ -1,17 +1,17 @@
 """One side of a duel: every unit in order, a freshly served policy for each, resumable.
 
-Units run in the order the duel lists them - the spec's skills in order, each skill's units in
+Units run in the order the duel lists them - the spec's tasks in order, each task's runs in
 order. For each one:
 
 1. the prompt it was materialized with is re-hashed (both sides must run from the same bytes);
-2. the runtime serves the side's policy for this unit alone (`PolicyRuntime.serve`);
+2. the runtime serves the side's policy for this unit alone (`runtime.serve`);
 3. the benchmark's `run_command` runs as a subprocess with the allow-listed environment plus the
    policy's key variable, within `min(budgets.unit_wall_seconds, what is left of the side's
    budget)` less the time the policy took to start, and its result is read back as an `Outcome`.
    `run_command` is given `act_timeout_s`; that subprocess timeout as `unit_timeout_s`, so the
    benchmark can stop calling the policy in time to write why a unit it cannot finish ended;
    `policy_budget_s`, what starting the policy left of `budgets.policy_budget_seconds`, never more
-   than that timeout less the benchmark's result reserve (`info()["limits"]["result_reserve_s"]`);
+   than that timeout less the benchmark's result reserve (`result_reserve_s`);
    and `policy_log`, a copy of the end of the policy's log in the unit's directory, which the
    benchmark may quote (`runtime.mirror_log`) - never the log the policy itself writes;
 4. whose the outcome is, when it is not a scored one, is decided (`attribute`);
@@ -28,8 +28,8 @@ failure on the unit, scored like any failed episode:
 
 - void: its prompt is void (materialization failed) or changed on disk, before the unit or during
   it, or the benchmark reports reading a prompt of another sha256; the side or the duel ran
-  out of wall clock before it started; the runtime could not serve (`RuntimeUnavailable`: no
-  Docker, a container removed from outside); the benchmark crashed, timed out or wrote nothing
+  out of wall clock before it started; the runtime could not serve (`RuntimeUnavailable`); the
+  benchmark crashed, timed out or wrote nothing
   while the policy was fine; the benchmark said `void_cause: "harness"` (a unit that ran out of
   time while its policy was within its budget), or the policy was ended from outside whatever the
   benchmark said; or the duel already knows the unit is void (`void_units`: void on the other
@@ -39,7 +39,7 @@ failure on the unit, scored like any failed episode:
   which covers `budgets.policy_start_seconds`) or took all of `budgets.policy_budget_seconds` to
   start; the benchmark said `void_cause: "policy"` (an act timeout, a policy that used up its
   budget, a lost policy); or the benchmark gave no cause and the policy ended badly underneath it
-  (a non-zero exit, a signal, running out of memory in its sandbox).
+  (a non-zero exit, a signal, running out of memory).
 
 A scored outcome stands whatever the policy did after it: nothing turns a result into a void
 afterwards. A policy that died on one unit is served afresh for the next, like any other.
@@ -58,8 +58,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ..benchmarks.subprocess_runner import Outcome, benchmark_environment, run_unit, voided
 from ..canon import sha256_file
+from ..runner import Outcome, benchmark_environment, run_unit, voided
 from .materialize import Materialized
 from .orphans import Ledger, move_aside, reap_ledger
 from .runtime import (
@@ -68,7 +68,6 @@ from .runtime import (
     POLICY,
     PolicyDied,
     PolicyEnd,
-    PolicyRuntime,
     PreparedSubmission,
     RuntimeUnavailable,
     mirror_log,
@@ -118,9 +117,8 @@ def attribute(outcome: Outcome, end: PolicyEnd | None) -> Outcome:
     A scored outcome stands. A void one is the side's failure when the benchmark names the policy
     as its cause, or names no cause while the policy ended by its own doing; otherwise it stays
     void. The one thing the orchestrator knows better than the benchmark is a policy ended from
-    outside (its container removed, Docker gone): a benchmark cannot tell that from a policy that
-    went away, so it is void whatever cause the benchmark gave. What the benchmark reported
-    (steps, progress, its clip) is kept either way.
+    outside: a benchmark cannot tell that from a policy that went away, so it is void whatever
+    cause the benchmark gave. What the benchmark reported (steps, its clip) is kept either way.
     """
     if not outcome.void:
         if end is not None:
@@ -140,15 +138,11 @@ def attribute(outcome: Outcome, end: PolicyEnd | None) -> Outcome:
 
 
 def result_reserve_s(benchmark: Any) -> float:
-    """What a benchmark keeps back from `unit_timeout_s` to write its result, as its
-    `info()["limits"]["result_reserve_s"]` says: 0 for one that says nothing readable."""
-    try:
-        value = benchmark.info()["limits"]["result_reserve_s"]
-    except Exception:  # noqa: BLE001 - a plugin that cannot say keeps nothing back
-        return 0.0
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        return 0.0
-    return max(0.0, float(value))
+    """What a benchmark keeps back from `unit_timeout_s` to write its result; 0 when it says
+    nothing readable."""
+    value = getattr(benchmark, "result_reserve_s", 0.0)
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    return max(0.0, float(value)) if ok else 0.0
 
 
 def unit_limits(
@@ -177,13 +171,11 @@ def unit_record(
     clip = Path(outcome.clip) if outcome.clip and not outcome.void else None
     return {
         "unit_id": str(unit["unit_id"]),
-        "skill": unit.get("skill"),
+        "task": unit.get("task"),
         "success": outcome.success,
         "void": outcome.void,
         "steps": outcome.steps,
         "error": outcome.error,
-        "progress": outcome.progress,
-        "metric": outcome.metric,
         "wall_s": outcome.wall_s,
         "clip": str(clip.relative_to(side_dir)) if clip else None,
         "clip_sha256": sha256_file(clip) if clip else None,
@@ -198,8 +190,8 @@ def run_side(
     units: Sequence[Mapping[str, Any]],
     prompts: Materialized,
     side_dir: Path,
-    benchmark_of: Callable[[Mapping[str, Any]], Any],
-    runtime: PolicyRuntime | None,
+    benchmark: Any,
+    runtime: Any,
     prepared: PreparedSubmission | None,
     refused: str | None = None,
     deadline: float | None = None,
@@ -225,15 +217,14 @@ def run_side(
     done = read_results(side_dir)
     budgets = spec.budgets
     spent = sum(float(r.get("wall_s") or 0.0) for r in done.values())
-    side_budget = float(budgets["side_wall_seconds"]) if budget_s is None else float(budget_s)
+    side_budget = float(budgets["side"]) if budget_s is None else float(budget_s)
     side_deadline = time.monotonic() + side_budget - spent
     if deadline is not None:
         side_deadline = min(side_deadline, deadline)
-    unit_budget = float(budgets["unit_wall_seconds"])
-    policy_budget = float(budgets["policy_budget_seconds"])
-    extra = {"act_timeout_s": float(budgets["act_timeout_s"])}
-    #: Each benchmark's result reserve, asked once per side.
-    reserves: dict[str, float] = {}
+    unit_budget = float(budgets["unit"])
+    policy_budget = float(budgets["policy"])
+    extra = {"act_timeout_s": float(budgets["act"])}
+    reserve = result_reserve_s(benchmark)
     if prepared is None and refused is None:
         refused = "the submission was not prepared"
 
@@ -256,7 +247,7 @@ def run_side(
             prompts=prompts,
             side=side,
             side_dir=side_dir,
-            benchmark_of=benchmark_of,
+            benchmark=benchmark,
             runtime=runtime,
             prepared=prepared,
             refused=refused,
@@ -264,7 +255,7 @@ def run_side(
             unit_budget=unit_budget,
             policy_budget=policy_budget,
             extra=extra,
-            reserves=reserves,
+            reserve=reserve,
             void_units=void_units,
             stop=stop,
             on_start=on_start,
@@ -304,10 +295,6 @@ def run_side(
                 log.warning("%s %s: an interrupted attempt is kept at %s", side, unit_id, moved)
             if on_start is not None:
                 on_start(unit)
-            benchmark = benchmark_of(unit)
-            name = str(getattr(benchmark, "id", ""))
-            if name not in reserves:
-                reserves[name] = result_reserve_s(benchmark)
             outcome = _play(
                 runtime,  # type: ignore[arg-type]
                 prepared,  # type: ignore[arg-type]
@@ -319,7 +306,7 @@ def run_side(
                 deadline=min(time.monotonic() + unit_budget, side_deadline),
                 extra=extra,
                 policy_budget_s=policy_budget,
-                result_reserve_s=reserves[name],
+                result_reserve_s=reserve,
                 stall_s=stall_s,
                 stall_retries=stall_retries,
             )
@@ -354,15 +341,15 @@ def _run_pooled(
     prompts: Materialized,
     side: str,
     side_dir: Path,
-    benchmark_of: Callable[[Mapping[str, Any]], Any],
-    runtime: PolicyRuntime | None,
+    benchmark: Any,
+    runtime: Any,
     prepared: PreparedSubmission | None,
     refused: str | None,
     side_deadline: float,
     unit_budget: float,
     policy_budget: float,
     extra: Mapping[str, Any],
-    reserves: dict[str, float],
+    reserve: float,
     void_units: Mapping[str, str] | None,
     stop: Callable[[], bool] | None,
     on_start: Callable[[Mapping[str, Any]], None] | None,
@@ -373,17 +360,7 @@ def _run_pooled(
 ) -> None:
     """`run_side`'s units, `workers` at a time. What needs no play is recorded at once, in this
     thread; a unit that is played runs `_play` in a worker, and is recorded here as it finishes."""
-    import threading
     from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    lock = threading.Lock()
-
-    def reserve(benchmark: Any) -> float:
-        name = str(getattr(benchmark, "id", ""))
-        with lock:
-            if name not in reserves:
-                reserves[name] = result_reserve_s(benchmark)
-            return reserves[name]
 
     def job(unit: Mapping[str, Any], prompt: Any) -> Outcome | None:
         unit_id = str(unit["unit_id"])
@@ -395,7 +372,6 @@ def _run_pooled(
             return voided(f"no prompt: {changed}")
         if on_start is not None:
             on_start(unit)
-        benchmark = benchmark_of(unit)
         outcome = _play(
             runtime,  # type: ignore[arg-type]
             prepared,  # type: ignore[arg-type]
@@ -407,7 +383,7 @@ def _run_pooled(
             deadline=min(time.monotonic() + unit_budget, side_deadline),
             extra=extra,
             policy_budget_s=policy_budget,
-            result_reserve_s=reserve(benchmark),
+            result_reserve_s=reserve,
             stall_s=stall_s,
             stall_retries=stall_retries,
         )
@@ -457,7 +433,7 @@ def _run_pooled(
 
 
 def _play(
-    runtime: PolicyRuntime,
+    runtime: Any,
     prepared: PreparedSubmission,
     benchmark: Any,
     unit: Mapping[str, Any],
@@ -506,7 +482,7 @@ def _play(
 
 
 def _play_once(
-    runtime: PolicyRuntime,
+    runtime: Any,
     prepared: PreparedSubmission,
     benchmark: Any,
     unit: Mapping[str, Any],

@@ -1,44 +1,48 @@
-"""Where a submission's policy runs, as a duel sees it: one small seam.
+"""Serving a side's policy: one fresh `python -m vector_protocol.serve` per unit, on this host.
 
-A duel never builds an image or starts a container itself. It asks a `PolicyRuntime` three
-things, in order:
+A duel asks a runtime, in order: `resolve(repo, revision)` for the commit that will run; `fetch`
+then `prepare` once per side (the `fetching` and `checking` phases); and `serve(prepared)`, a
+context manager serving the policy for one unit. The server accepts one client and exits, so
+nothing a policy remembers leaks from one unit into the next, and a policy that died on one unit
+is simply served again.
 
-- `resolve(repo, revision)`: the `SubmissionRef` at the commit that will run.
-- `fetch(ref)`, then `prepare(fetched)`: once per side, before a unit is played. Fetching is the
-  `fetching` phase and preparing (manifest, image, a health check) is `checking`, which is why
-  they are two calls. A submission that cannot run raises `SubmissionRefused` with a reason that
-  can be published; a harness that cannot do its part raises `RuntimeUnavailable`, which judges
-  nobody.
-- `serve(prepared, workdir=...)`: a context manager that serves the policy **for one unit** and
-  yields where to reach it. `python -m vector_protocol.serve` accepts exactly one client and exits
-  when it hangs up, so every unit gets a fresh policy process - which is also what keeps
-  whatever a policy remembers from leaking from one unit into the next, and why a policy that died
-  on one unit is simply served again for the next.
+Whose a failure is decides what it costs. A submission that cannot run raises `SubmissionRefused`
+(a published reason); a policy that never listens within `budgets.policy_start` raises
+`PolicyDied` (that side's failure on the unit); a runtime that cannot do its part raises
+`RuntimeUnavailable` (nobody's loss, void for both). After a unit, `ServedPolicy.died()` says how
+the policy ended if it did not end cleanly.
 
-Whose a failure is decides what it costs, so the seam keeps the two apart. A policy that never
-listens within `budgets.policy_start_seconds`, or exits before it does, raises `PolicyDied`: the
-submission's own doing, that side's failure on the unit. A runtime that cannot serve at all (no
-Docker, a container removed from outside) raises `RuntimeUnavailable`: nobody's doing, void for
-both. After the unit, `ServedPolicy.died()` says how the policy ended if it did not end cleanly, as
-a `PolicyEnd` whose `cause` is one or the other.
-
-Two runtimes implement it: `docker_runtime.DockerPolicyRuntime`, the sandbox (#4's containers),
-and `local_runtime.SubprocessPolicyRuntime`, which runs a local directory's policy on this host
-with no sandbox at all, for development and the tests.
+`SubprocessPolicyRuntime` serves local directories holding a `policy.yaml` (the example policies,
+the tests); `weights_runtime.WeightsPolicyRuntime` serves submissions.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
+import secrets
+import shutil
+import signal
 import stat
+import subprocess
+import sys
+import tempfile
 import threading
-from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass, field
+import time
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
-from ..ids import SubmissionRef
+from vector_protocol.client import RemotePolicy
+from vector_protocol.errors import ManifestError, PolicyUnavailable
+from vector_protocol.logs import tail
+from vector_protocol.manifest import load as load_manifest
+
+from ..ids import SubmissionRef, is_commit_sha
+from ..runner import benchmark_environment
+from .orphans import Ledger
 
 
 class SubmissionRefused(Exception):
@@ -51,7 +55,7 @@ class SubmissionRefused(Exception):
 
 
 class RuntimeUnavailable(RuntimeError):
-    """The runtime could not take a submission through a step (no Docker, no Hub); nobody's loss."""
+    """The runtime could not take a submission through a step (no Hub, no server); nobody's loss."""
 
 
 class PolicyDied(RuntimeError):
@@ -81,8 +85,7 @@ class PolicyEnd:
     """How a unit's policy ended underneath it, when it did not end cleanly.
 
     `cause` is `policy` for an end its submission can bring about - a non-zero exit, a signal,
-    running out of the sandbox's memory - and `harness` for one it cannot: its container removed
-    from outside, or Docker not answering about it.
+    running out of memory - and `harness` for one it cannot.
     """
 
     reason: str
@@ -91,40 +94,65 @@ class PolicyEnd:
 
 @dataclass(frozen=True)
 class FetchedSubmission:
-    """A submission's code, at the commit it resolved to, where the runtime can build it."""
+    """A submission at the commit it resolved to, where the runtime can serve it from."""
 
     ref: SubmissionRef
-    #: The commit the code is at: the Hub's sha, or a local directory's tree hash.
     commit: str
     root: Path
-    detail: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class PreparedSubmission:
-    """A submission ready to serve: checked, built, and answering `hello`."""
+    """A submission ready to serve: checked, and answering `hello`."""
 
     ref: SubmissionRef
     commit: str
-    #: The base image the submission's image was built from, by digest; None where there is none.
-    base_image_digest: str | None
-    #: The submission's own image id; None for a runtime that builds none.
-    image: str | None
-    #: `module:Class` from its `policy.yaml`, and what it answered `hello` with.
-    policy: str | None
-    action_type: str | None
-    #: Whatever the runtime needs to serve it again (an image tag, a checkout); not published.
-    handle: Any = field(default=None, compare=False, repr=False)
+    #: The weights file's sha256, published with the side; None for a local directory.
+    weights_sha256: str | None
+    #: What the runtime serves it from (its manifest); not published.
+    handle: Any = None
 
-    def as_side(self) -> dict[str, Any]:
-        """What an event record carries for this submission as one side of a duel."""
-        return {
-            "commit": self.commit,
-            "base_image_digest": self.base_image_digest,
-            "image": self.image,
-            "policy": self.policy,
-            "action_type": self.action_type,
-        }
+
+#: The variable a served policy's key travels in, by name only.
+AUTHKEY_ENV = "VECTOR_AUTHKEY"
+AUTHKEY_BYTES = 32
+SOCKET_FILE = "policy.sock"
+#: In the unit's directory once the unit is over: the server's log and what the policy printed.
+LOG_FILE = "policy.log"
+#: The most of a policy's log copied out: the policy writes it and nothing else bounds it.
+MAX_LOG_BYTES = 16 << 20
+POLL_S = 0.05
+#: How long a server whose client has gone gets to exit on its own before its status is read.
+EXIT_GRACE_S = 5.0
+#: What a local directory holds that is not the submission.
+IGNORED = frozenset({".git", "__pycache__"})
+#: The manifest a served directory holds, and its schema.
+MANIFEST = "policy.yaml"
+MANIFEST_API = 1
+
+
+def local_directories(pairs: Mapping[str, str | os.PathLike[str]]) -> dict[str, Path]:
+    return {str(k): Path(v).resolve() for k, v in pairs.items()}
+
+
+def tree_hash(directory: Path) -> str:
+    """A 40-hex address of a directory's files and bytes, standing in for a commit sha."""
+    digest = hashlib.sha1()
+    paths = []
+    for root, dirs, files in os.walk(directory):  # never follows a link to a directory
+        dirs[:] = [d for d in dirs if d not in IGNORED]
+        paths += [Path(root) / name for name in (*files, *dirs)]
+    for path in sorted(paths):
+        rel = path.relative_to(directory)
+        info = os.lstat(path)
+        if stat.S_ISREG(info.st_mode):
+            content = hashlib.sha1(path.read_bytes()).hexdigest()
+        elif stat.S_ISLNK(info.st_mode):
+            content = "link:" + os.readlink(path)
+        else:
+            continue
+        digest.update(f"{rel.as_posix()}\0{content}\n".encode())
+    return digest.hexdigest()
 
 
 def copy_log(source: Path, target: Path, limit: int) -> None:
@@ -232,26 +260,190 @@ class ServedPolicy:
     live_log: Path | None = None
     #: The policy server's process group on this host, whose CPU counts as the unit's progress for
     #: the stall watchdog (a benchmark waiting on a policy that is building its model is not
-    #: hung); None where the runtime cannot say (a container).
+    #: hung); None where the runtime cannot say.
     pgid: int | None = None
 
 
-@runtime_checkable
-class PolicyRuntime(Protocol):
-    #: `docker` or `local`, recorded with every duel it serves.
-    name: str
+class SubprocessPolicyRuntime:
+    """Serve local directories' policies as subprocesses."""
 
-    def reap(self) -> list[str]:
-        """Remove what a killed process started and could not tear down; the names of what was
-        removed. Called by the orchestrator on start, holding the store's lock."""
-        ...
+    #: Variables a served policy inherits beyond the subprocess allow-list (`benchmark_environment`).
+    env_keep: tuple[str, ...] = ()
+    #: Variables set for a served policy whatever the host has (a thread cap, say).
+    env_set: dict[str, str] = {}
 
-    def resolve(self, repo: str, revision: str) -> SubmissionRef: ...
+    def __init__(
+        self,
+        spec: Any,
+        local: Mapping[str, str | os.PathLike[str]],
+        *,
+        python: str = sys.executable,
+        start_timeout_s: float | None = None,
+    ) -> None:
+        self.spec = spec
+        self.local = local_directories(local)
+        self.python = python
+        self.start_timeout_s = float(
+            start_timeout_s if start_timeout_s is not None else spec.budgets["policy_start"]
+        )
 
-    def fetch(self, ref: SubmissionRef, *, workdir: Path) -> FetchedSubmission: ...
+    # -- the seam ---------------------------------------------------------------------------
 
-    def prepare(self, fetched: FetchedSubmission, *, workdir: Path) -> PreparedSubmission: ...
+    def directory(self, ref_or_repo: SubmissionRef | str) -> Path:
+        repo = ref_or_repo if isinstance(ref_or_repo, str) else ref_or_repo.repo
+        key = None if isinstance(ref_or_repo, str) else ref_or_repo.key
+        found = self.local.get(repo) or (self.local.get(key) if key else None)
+        if found is None:
+            raise RuntimeUnavailable(f"no local directory for {repo}")
+        if not found.is_dir():
+            raise RuntimeUnavailable(f"{found} is not a directory")
+        return found
 
-    def serve(
-        self, prepared: PreparedSubmission, *, workdir: Path
-    ) -> AbstractContextManager[ServedPolicy]: ...
+    def resolve(self, repo: str, revision: str) -> SubmissionRef:
+        """A commit sha as given (the directory stands for that commit), or the directory's tree
+        hash for a branch or tag name, which a local directory cannot resolve."""
+        directory = self.directory(repo)
+        sha = revision if is_commit_sha(revision) else tree_hash(directory)
+        return SubmissionRef.resolved(repo, sha)
+
+    def fetch(self, ref: SubmissionRef, *, workdir: Path) -> FetchedSubmission:
+        directory = self.directory(ref)
+        return FetchedSubmission(ref=ref, commit=ref.revision, root=directory)
+
+    def prepare(self, fetched: FetchedSubmission, *, workdir: Path) -> PreparedSubmission:
+        path = fetched.root / MANIFEST
+        try:
+            manifest = load_manifest(path)
+        except ManifestError as exc:
+            raise SubmissionRefused("manifest", f"{MANIFEST}: {'; '.join(exc.problems)}") from None
+        if manifest.api != MANIFEST_API:
+            raise SubmissionRefused(
+                "manifest", f"{MANIFEST}: api {manifest.api} is not {MANIFEST_API}"
+            )
+        try:
+            with self._serve(path, Path(workdir)) as (served, key, live_log):
+                with RemotePolicy(
+                    served.address, key, timeout_s=self.start_timeout_s, log_file=live_log
+                ) as policy:
+                    policy.hello()
+        except PolicyDied as exc:
+            raise SubmissionRefused("start", str(exc)) from None
+        except PolicyUnavailable as exc:
+            raise SubmissionRefused("hello", str(exc)) from None
+        return PreparedSubmission(
+            ref=fetched.ref, commit=fetched.commit, weights_sha256=None, handle=path
+        )
+
+    @contextmanager
+    def serve(self, prepared: PreparedSubmission, *, workdir: Path) -> Iterator[ServedPolicy]:
+        with self._serve(Path(prepared.handle), Path(workdir)) as (served, _, _live):
+            yield served
+
+    # -- a server ---------------------------------------------------------------------------
+
+    @contextmanager
+    def _serve(self, manifest: Path, workdir: Path) -> Iterator[tuple[ServedPolicy, bytes, Path]]:
+        """One `vector_protocol.serve` process, listening; killed with its group on the way out.
+
+        Its log is written beside its socket, in a temporary directory of its own, and copied into
+        `workdir` when it is over: nothing on the policy's command line names the run directory,
+        which would tell it which side it is on and where the other side's results are."""
+        workdir.mkdir(parents=True, exist_ok=True)
+        # A Unix socket's path is limited to about 100 bytes, which a run directory can exceed.
+        sockets = Path(tempfile.mkdtemp(prefix="vector-duel-"))
+        address = sockets / SOCKET_FILE
+        log_file = sockets / LOG_FILE
+        key = secrets.token_bytes(AUTHKEY_BYTES)
+        env = {
+            **benchmark_environment(os.environ, AUTHKEY_ENV, self.env_keep),
+            **self.env_set,
+            AUTHKEY_ENV: key.hex(),
+        }
+        argv = [
+            self.python,
+            "-m",
+            "vector_protocol.serve",
+            "--manifest",
+            str(manifest),
+            "--address",
+            str(address),
+            "--authkey-env",
+            AUTHKEY_ENV,
+            "--log-file",
+            str(log_file),
+        ]
+        try:
+            process = subprocess.Popen(
+                argv,
+                env=env,
+                cwd=sockets,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            shutil.rmtree(sockets, ignore_errors=True)
+            raise RuntimeUnavailable(f"the policy server could not be started: {exc}") from None
+        ledger = Ledger(workdir)
+        try:
+            ledger.started(process.pid)
+            self._wait_listening(process, address, log_file)
+            served = ServedPolicy(
+                address=str(address),
+                authkey_env=AUTHKEY_ENV,
+                env={AUTHKEY_ENV: key.hex()},
+                log_file=workdir / LOG_FILE,
+                died=lambda: self._died(process, log_file),
+                live_log=log_file,
+                pgid=process.pid,
+            )
+            self._started(process, served)
+            yield served, key, log_file
+        finally:
+            _kill_group(process)
+            ledger.ended(process.pid)
+            copy_log(log_file, workdir / LOG_FILE, MAX_LOG_BYTES)
+            shutil.rmtree(sockets, ignore_errors=True)
+
+    def _wait_listening(self, process: subprocess.Popen, address: Path, log_file: Path) -> None:
+        deadline = time.monotonic() + self.start_timeout_s
+        while not address.exists():
+            code = process.poll()
+            if code is not None:
+                raise PolicyDied(
+                    f"the policy exited ({code}) before listening\n{tail(log_file)}".rstrip()
+                )
+            if time.monotonic() >= deadline:
+                raise PolicyDied(
+                    f"the policy did not listen within {self.start_timeout_s:g}s\n"
+                    f"{tail(log_file)}".rstrip()
+                )
+            time.sleep(POLL_S)
+
+    def _started(self, process: subprocess.Popen, served: ServedPolicy) -> None:
+        """Called once a server listens. The tests stand in here to kill one."""
+
+    @staticmethod
+    def _died(process: subprocess.Popen, log_file: Path) -> PolicyEnd | None:
+        """How the server ended underneath its unit: any end but a clean exit after its client.
+        It is killed only on the way out of `_serve`, after this is read, so an end seen here is
+        the policy's own - on this host nothing tells a policy that exited from one killed by the
+        machine's own OOM killer."""
+        try:
+            code = process.wait(timeout=EXIT_GRACE_S)
+        except subprocess.TimeoutExpired:
+            return None  # still serving a client that never came or never left: not dead
+        if code == 0:
+            return None
+        how = f"was killed by signal {-code}" if code < 0 else f"exited {code}"
+        return PolicyEnd(f"the policy process {how}\n{tail(log_file)}".rstrip(), POLICY)
+
+
+def _kill_group(process: subprocess.Popen) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        if process.poll() is None:
+            process.kill()
+    process.wait()

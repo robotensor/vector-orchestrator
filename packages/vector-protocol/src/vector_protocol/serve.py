@@ -22,7 +22,7 @@ ends the session, because nothing after it can be trusted to line up. No server 
 client: when the client hangs up, even in the middle of a policy call that never returns, the
 process exits, and a client that holds the connection with nothing to say for `--idle-timeout-s`
 (30 minutes by default; a policy call in progress is not idle) is taken to have gone. (A call stuck in native code that holds the GIL cannot be interrupted from Python;
-the container around the server is the last resort.)
+the caller's kill of the server's process group is the last resort.)
 
 **Exit status.** The process exits as soon as the session ends, however it ends, without waiting
 for threads the policy started. 0 after `close`, when the client hangs up or when it was idle too

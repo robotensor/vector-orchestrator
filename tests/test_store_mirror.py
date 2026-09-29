@@ -42,7 +42,7 @@ def store(spec, tmp_path):
     s.init()
     with store_lock(s.root):
         pass
-    (s.root / "tracks" / "franka_1arm" / "queue.json.tmp").write_text("{")
+    (s.root / "queue.json.tmp").write_text("{")
     return s
 
 
@@ -51,15 +51,19 @@ def test_mirror_lists_only_the_store_files(store):
     (store.root / "runs").mkdir()
     (store.root / "runs" / "duel.log").write_text("a run log\n")
     (store.root / "notes.md").write_text("scratch")
-    (store.root / "events" / "franka_1arm").mkdir(parents=True)
-    (store.root / "events" / "franka_1arm" / "abc123ff.json").write_text("{}")
-    (store.root / "events" / "franka_1arm" / "draft.txt").write_text("no")
+    (store.root / "events").mkdir(parents=True)
+    (
+        store.root
+        / "events"
+        / "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.json"
+    ).write_text("{}")
+    (store.root / "events" / "draft.txt").write_text("no")
 
     files = mirror.store_files(store.root)
     assert files == [
-        "events/franka_1arm/abc123ff.json",
+        "events/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.json",
+        "head.json",
         "manifest.json",
-        "tracks/franka_1arm/head.json",
     ]
     assert (store.root / ".orchestrator.lock").exists()
 
@@ -80,7 +84,7 @@ def test_prune_deletes_stale_paths_but_keeps_the_repository_own_files(store, api
     added = sorted(op.path_in_repo for op in ops if type(op).__name__ == "CommitOperationAdd")
     assert message == "rebuild"
     assert deleted == ["events/t/old.json"]
-    assert added == ["manifest.json", "tracks/franka_1arm/head.json"]
+    assert added == ["head.json", "manifest.json"]
 
 
 def test_a_full_mirror_uploads_the_store_and_nothing_beside_it(store, api):
@@ -88,19 +92,13 @@ def test_a_full_mirror_uploads_the_store_and_nothing_beside_it(store, api):
     (store.root / "runs" / "duel.log").write_text("a run log\n")
     assert mirror.mirror_store(store.root, "org/store") == 2
     ((_, ops),) = api.commits
-    assert sorted(op.path_in_repo for op in ops) == [
-        "manifest.json",
-        "tracks/franka_1arm/head.json",
-    ]
+    assert sorted(op.path_in_repo for op in ops) == ["head.json", "manifest.json"]
 
 
 def test_push_adds_exactly_what_a_publish_touched(store, api):
     assert mirror.mirror_store(store.root, "org/store", files=store.drain_touched()) == 2
     ((_, ops),) = api.commits
-    assert sorted(op.path_in_repo for op in ops) == [
-        "manifest.json",
-        "tracks/franka_1arm/head.json",
-    ]
+    assert sorted(op.path_in_repo for op in ops) == ["head.json", "manifest.json"]
 
 
 def test_an_empty_directory_never_empties_the_repository(tmp_path, api):
@@ -115,6 +113,8 @@ def test_an_empty_directory_never_empties_the_repository(tmp_path, api):
 def test_the_cli_mirrors_a_store(store, api, capsys):
     from vector_orchestrator.cli import main
 
-    assert main(["store", "mirror", str(store.root), "--repo", "org/store", "--prune"]) == 0
+    assert (
+        main(["store", "mirror", "--root", str(store.root), "--repo", "org/store", "--prune"]) == 0
+    )
     assert capsys.readouterr().out.strip() == "mirrored 2 files to org/store"
     assert len(api.commits) == 1

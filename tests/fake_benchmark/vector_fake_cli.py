@@ -1,12 +1,15 @@
-"""`python -m vector_fake_cli ...`: the orchestrator's command line with the fake benchmark
-registered as the `fake` driver, for a test that runs the orchestrator in a process of its own,
-where a monkeypatched registry does not reach."""
+"""`vector-orchestrator` with the fake benchmark standing where the RoboTwin checkout stands."""
+
+import sys
 
 import vector_fake_benchmark
 
-from vector_orchestrator.benchmarks import drivers
+from vector_orchestrator import robotwin
 from vector_orchestrator.cli import main
 
-drivers.DRIVERS["fake"] = lambda pin: vector_fake_benchmark.BENCHMARK
+robotwin.RoboTwin.from_environment = classmethod(
+    lambda cls, level, environ=None: vector_fake_benchmark.FakeBenchmark()
+)
 
-raise SystemExit(main())
+if __name__ == "__main__":
+    sys.exit(main())
