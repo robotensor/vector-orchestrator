@@ -1,7 +1,7 @@
 """`python -m vector_protocol.serve`: one competitor's policy, served to one client.
 
     python -m vector_protocol.serve --manifest PATH --address ADDR --authkey-env NAME [--log-file PATH]
-                                [--idle-timeout-s SECONDS]
+                                [--idle-timeout-s SECONDS] [--keep]
 
 `ADDR` is a Unix socket path or `host:port`. The environment variable `NAME` holds the
 authentication key as hex, at least 16 bytes of it; it is read once and removed from the
@@ -23,6 +23,13 @@ client: when the client hangs up, even in the middle of a policy call that never
 process exits, and a client that holds the connection with nothing to say for `--idle-timeout-s`
 (30 minutes by default; a policy call in progress is not idle) is taken to have gone. (A call stuck in native code that holds the GIL cannot be interrupted from Python;
 the caller's kill of the server's process group is the last resort.)
+
+**Keeping the policy.** With `--keep` the server serves clients one after another, building the
+policy once: a session that ends cleanly (`close`, a hang-up between calls, an idle client) is
+followed by the next client, which gets the same policy object (`reset` and `prompt` start its
+episode). The policy's own `reset`/`set_demonstration` must forget the last episode; the validator's
+own policy does. The server exits when a session fails, when a client hangs up during a call, or
+when no client comes for `--idle-timeout-s`. It saves building the model for every unit.
 
 **Exit status.** The process exits as soon as the session ends, however it ends, without waiting
 for threads the policy started. 0 after `close`, when the client hangs up or when it was idle too
@@ -141,8 +148,19 @@ class _HangupWatch:
         # non-blocking, which would break the connection's own reads.
         os.set_blocking(fd, True)
         self._busy = threading.Event()
+        #: Set once the session is over; read and written under `_lock`, so that a hang-up seen
+        #: while stopping is never taken for one during a call.
+        self._closed = False
+        self._lock = threading.Lock()
         self._op = ""
         threading.Thread(target=self._run, name="vector-protocol-hangup-watch", daemon=True).start()
+
+    def close(self) -> None:
+        """Stop watching: the session is over, and the next one has a watch of its own. The
+        thread closes its duplicate descriptor itself, so its number is not reused under it."""
+        with self._lock:
+            self._closed = True
+        self._busy.set()  # wakes the thread, which finds the watch closed
 
     @contextlib.contextmanager
     def __call__(self, op: str) -> Iterator[None]:
@@ -154,9 +172,19 @@ class _HangupWatch:
             self._busy.clear()
 
     def _run(self) -> None:
+        try:
+            self._watch()
+        finally:
+            with contextlib.suppress(OSError):
+                self._sock.close()
+
+    def _watch(self) -> None:
         while True:
             self._busy.wait()
             while self._busy.is_set():
+                with self._lock:
+                    if self._closed:
+                        return
                 try:
                     ready, _, _ = select.select([self._sock], [], [], WATCH_SLICE_S)
                 except (OSError, ValueError):
@@ -171,12 +199,22 @@ class _HangupWatch:
                     data = b""
                 if data:
                     time.sleep(WATCH_SLICE_S)  # a message waits; it is read after this call
-                elif self._busy.is_set():
+                    continue
+                with self._lock:
+                    if self._closed or not self._busy.is_set():
+                        continue
                     log.warning(
                         "the client hung up during %s; exiting without its answer", self._op
                     )
                     _flush()
                     os._exit(EXIT_OK)
+
+
+class Built:
+    """The policy a server has built, kept from one session to the next under `--keep`."""
+
+    policy: Any = None
+    action_type: str | None = None
 
 
 class Session:
@@ -188,14 +226,22 @@ class Session:
         manifest: Manifest,
         log_file: Path | None,
         idle_timeout_s: float = IDLE_TIMEOUT_S,
+        built: Built | None = None,
     ) -> None:
         self.conn = conn
         self.idle_timeout_s = idle_timeout_s
         self.manifest = manifest
         self.log_file = log_file
-        self.policy: Any = None
-        self.action_type: str | None = None
+        self.built = built if built is not None else Built()
         self.watch = _HangupWatch(conn)
+
+    @property
+    def policy(self) -> Any:
+        return self.built.policy
+
+    @property
+    def action_type(self) -> str | None:
+        return self.built.action_type
 
     def run(self) -> int:
         try:
@@ -242,7 +288,7 @@ class Session:
             ok, policy = self._call("hello", build_policy, self.manifest)
             if not ok:
                 raise _SessionOver(EXIT_FAILED)
-            self.policy, self.action_type = policy, policy.action_type
+            self.built.policy, self.built.action_type = policy, policy.action_type
             log.info("serving %s, action_type %r", self.manifest.policy, self.action_type)
         self._send(
             "ok",
@@ -353,9 +399,12 @@ def _configure_logging() -> None:
     log.propagate = False  # a policy that configures the root logger does not silence the server
 
 
-def _accept(listener: Listener) -> Any:
-    """The first client that authenticates. A wrong key is logged and the next client awaited."""
+def _accept(listener: Listener, timeout_s: float | None = None) -> Any:
+    """The first client that authenticates, or None when none comes within `timeout_s`. A wrong
+    key is logged and the next client awaited."""
     while True:
+        if timeout_s is not None and not _pending(listener, timeout_s):
+            return None
         try:
             return listener.accept()
         except AuthenticationError as exc:
@@ -366,6 +415,16 @@ def _accept(listener: Listener) -> Any:
             if exc.errno is not None:
                 raise  # the listener itself failed
             log.warning("a client sent nonsense during authentication: %s", exc)
+
+
+def _pending(listener: Listener, timeout_s: float) -> bool:
+    """Whether a client is waiting to be accepted within `timeout_s`; True where the listener's
+    socket cannot be watched, so accepting simply blocks."""
+    sock = getattr(getattr(listener, "_listener", None), "_socket", None)
+    if sock is None:
+        return True
+    ready, _, _ = select.select([sock], [], [], timeout_s)
+    return bool(ready)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -390,6 +449,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=IDLE_TIMEOUT_S,
         metavar="SECONDS",
         help=f"end the session after a client says nothing this long (default {IDLE_TIMEOUT_S:g})",
+    )
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help="serve clients one after another with the policy built once; exit when a session "
+        "fails or no client comes for the idle timeout",
     )
     return parser
 
@@ -443,17 +508,28 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         log.error("cannot listen on %s: %s", args.address, exc)
         return EXIT_USAGE
-    log.info("listening on %s to serve %s to one client", args.address, manifest.policy)
+    whom = "clients one after another" if args.keep else "one client"
+    log.info("listening on %s to serve %s to %s", args.address, manifest.policy, whom)
+    built = Built()
     try:
-        conn = _accept(listener)
+        while True:
+            conn = _accept(listener, args.idle_timeout_s if args.keep else None)
+            if conn is None:
+                log.info("no client came for %gs; exiting", args.idle_timeout_s)
+                return EXIT_OK
+            session = Session(conn, manifest, log_file, args.idle_timeout_s, built)
+            try:
+                status = session.run()
+            finally:
+                session.watch.close()
+                _flush()
+                with contextlib.suppress(OSError):
+                    conn.close()
+            if not args.keep or status != EXIT_OK:
+                return status
+            log.info("the session is over; waiting for the next client")
     finally:
         listener.close()
-    try:
-        return Session(conn, manifest, log_file, args.idle_timeout_s).run()
-    finally:
-        _flush()
-        with contextlib.suppress(OSError):
-            conn.close()
 
 
 def _exit(status: int) -> None:

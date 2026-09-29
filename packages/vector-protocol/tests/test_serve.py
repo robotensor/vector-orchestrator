@@ -270,6 +270,45 @@ def test_a_client_that_says_nothing_for_the_idle_timeout_ends_the_server(probe_r
     assert "said nothing for 1s" in server.log()
 
 
+def test_with_keep_clients_are_served_one_after_another_by_one_built_policy(probe_repo, serve):
+    server = serve(probe_repo(), args=("--keep",))
+    first = server.connect()
+    assert call(first, "hello")[0] == "ok"
+    assert call(first, "reset", {"seed": 3})[0] == "ok"
+    assert state_of(call(first, "act", {}, {"qpos": np.zeros(2)}))["seed"] == 3
+    assert call(first, "close")[0] == "ok"
+    first.close()
+    time.sleep(0.3)
+    assert server.process.poll() is None, server.log()  # waiting for the next client
+
+    second = server.connect()
+    assert call(second, "hello")[0] == "ok"
+    assert call(second, "reset", {"seed": 5})[0] == "ok"
+    assert state_of(call(second, "act", {}, {"qpos": np.zeros(2)}))["seed"] == 5
+    second.close()  # a hang-up between calls ends the session, not the server
+    third = server.connect()
+    assert call(third, "hello")[0] == "ok"
+    assert server.log().count("probe: built") == 1
+    assert server.process.poll() is None
+
+
+def test_with_keep_a_server_no_client_comes_to_exits_after_the_idle_timeout(probe_repo, serve):
+    server = serve(probe_repo(), args=("--keep", "--idle-timeout-s", "1"))
+    conn = server.connect()
+    call(conn, "hello")
+    assert call(conn, "close")[0] == "ok"
+    conn.close()
+    assert server.wait(timeout=10) == 0
+    assert "no client came for 1s" in server.log()
+
+
+def test_with_keep_a_failed_session_ends_the_server(probe_repo, serve):
+    server = serve(probe_repo(kwargs={"broken_init": True}), args=("--keep",))
+    conn = server.connect()
+    assert call(conn, "hello")[0] == "error"
+    assert server.wait(timeout=10) == 1
+
+
 def test_close_calls_the_policy_close_and_exits(probe_repo, serve, tmp_path):
     closed = tmp_path / "closed"
     server = serve(probe_repo(kwargs={"close_marker": str(closed)}))
