@@ -17,7 +17,7 @@ Importing this package imports nothing but the standard library.
 __version__ = "0.1.0.dev0"
 
 #: The architecture a submission is held to, and the name of its template files.
-ARCHITECTURE = "vector_robotwin_l1_v1"
+ARCHITECTURE = "vector_v1.1"
 #: The one file a submission holds.
 WEIGHTS_FILENAME = "model.safetensors"
 

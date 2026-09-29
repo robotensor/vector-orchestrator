@@ -146,13 +146,21 @@ def test_the_cli_prints_a_report_and_exits_by_it(tmp_path, template, capsys):
 def test_the_packaged_template_is_the_vector_architecture():
     tensors = load_tensors()
     config = load_config()
-    assert len(tensors) == 744
-    assert sum(_numel(t["shape"]) for t in tensors.values()) == 541_023_680
+    assert config["architecture"] == "vector_v1.1"
+    assert len(tensors) == 863
+    assert sum(_numel(t["shape"]) for t in tensors.values()) == 780_979_796
     assert {t["dtype"] for t in tensors.values()} == {"F32"}
     assert not set(config["tied_tensors"]) & set(tensors)
     assert set(config["tied_tensors"].values()) <= set(tensors)
     assert config["exec_action_horizon"] == 12
     assert config["action_horizon"] == 16
+    # Vector's input format: three cameras and raw per-arm proprioception, two frames each.
+    assert config["n_obs_steps"] == 2
+    assert set(config["obs_horizons"]) == {
+        "head_rgb", "left_wrist_rgb", "right_wrist_rgb",
+        *(f"{arm}_{key}" for arm in ("left", "right") for key in ("ee_pos", "ee_ori", "gripper_states")),
+    }
+    assert config["dataset"]["_target_"].endswith(".RobotwinReplayImageDataset")
     assert config["model"]["obs_encoder"]["obs_encoder"]["obs_encoder"]["pretrained"] is True
 
 
