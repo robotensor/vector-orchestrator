@@ -5,6 +5,8 @@ benchmark      the RoboTwin-Vector checkout the units run on: repo and branch
 level          the level benchmark's level the scenes are drawn at
 tasks          the tasks, each scored on its own
 runs_per_task  units per task and side in a duel
+step_ratio     a rollout stops after this many times the expert's steps in its scene (or at the
+               task's own step limit): lower it as models get faster
 crown          margin (points), alpha (sign test), max_void (fraction of units)
 model          the architecture submissions hold, and the digest of its tensor manifest
 budgets        seconds: policy_start, act, materialize, unit, policy, side, duel, stall;
@@ -63,6 +65,7 @@ def validate_spec(doc: Any) -> list[str]:
     )
     runs = doc.get("runs_per_task")
     need("runs_per_task: int >= 1", isinstance(runs, int) and _positive(runs))
+    need("step_ratio > 0", _positive(doc.get("step_ratio")))
     crown = doc.get("crown") if isinstance(doc.get("crown"), dict) else {}
     need("crown.margin in [0, 100]", _positive(crown.get("margin")) or crown.get("margin") == 0)
     need("crown.alpha in (0, 1)", _positive(crown.get("alpha")) and crown["alpha"] < 1)
@@ -118,6 +121,10 @@ class Spec:
     @property
     def runs_per_task(self) -> int:
         return int(self.raw["runs_per_task"])
+
+    @property
+    def step_ratio(self) -> float:
+        return float(self.raw["step_ratio"])
 
     @property
     def margin(self) -> float:

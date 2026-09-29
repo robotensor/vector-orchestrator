@@ -6,8 +6,8 @@
   "block": 1,
   "challenger": null,
   "dethroned": false,
-  "duel_id": "eff175d501452f5c2b757e56ac3bac353b63d79e891295a28e46e846d9393d8c",
-  "event_id": "f1e23f7a8c43271bfb252c7c0ebf94108030ee73afccdf8dbc74b1c432d9b0f2",
+  "duel_id": "4f169fad851243caf3f60d7d9518dcc7c0e22dac7d90cebeea3e106976c7abd2",
+  "event_id": "c98990247c3652512232f76c31fd32125549d274f2308fb030e25eb38269e3d1",
   "finished_at": "2026-09-13T09:00:00Z",
   "kind": "genesis",
   "king": {
@@ -44,7 +44,7 @@
     }
   },
   "seed": null,
-  "spec_version": 9,
+  "spec_version": 10,
   "started_at": "2026-09-13T08:30:00Z",
   "units": [
     {
@@ -59,7 +59,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "39d397e51cf5463ac9d1c6824d6e054cb849f3a38a1266d9f5486c6595333cf1",
-      "scene_seed": 1065625204,
+      "scene_seed": 960749000,
       "task": "beat_block_hammer",
       "unit_id": "beat_block_hammer-00",
       "void": false
@@ -76,7 +76,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "2859ca8a9c339c3b24a0e19675475314ed02497e8786684a4bd8644e224351a9",
-      "scene_seed": 1174526567,
+      "scene_seed": 1670186828,
       "task": "move_stapler_pad",
       "unit_id": "move_stapler_pad-00",
       "void": false
@@ -93,7 +93,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "f6b474ee9d7a80b56d2735bdc48e6d8c2790422fea7d5d90a086513870851c75",
-      "scene_seed": 1986456981,
+      "scene_seed": 1684301637,
       "task": "place_bread_skillet",
       "unit_id": "place_bread_skillet-00",
       "void": false
@@ -110,7 +110,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "d5ae41626e898782290b2e75de48c1a2efd3461fa1485386c51d5d189934ecbf",
-      "scene_seed": 1236764119,
+      "scene_seed": 807111285,
       "task": "place_burger_fries",
       "unit_id": "place_burger_fries-00",
       "void": false
@@ -127,7 +127,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "f76235acea323185ad3b9796b9048feb1cb119d7c4e9aaae98344ca08f524ac8",
-      "scene_seed": 507601567,
+      "scene_seed": 197693901,
       "task": "place_can_basket",
       "unit_id": "place_can_basket-00",
       "void": false
@@ -144,7 +144,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "057acbf7b21dffce3a7a278eb30baa088056611cbaae83c4991f79b6af6bf06f",
-      "scene_seed": 98979440,
+      "scene_seed": 1654915598,
       "task": "place_cans_plasticbox",
       "unit_id": "place_cans_plasticbox-00",
       "void": false
@@ -161,7 +161,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "5a08155e3d7ecc964a3b6eaa8e0643582a5cab23807860705a0f94821ceb0efc",
-      "scene_seed": 1846225252,
+      "scene_seed": 815865935,
       "task": "place_container_plate",
       "unit_id": "place_container_plate-00",
       "void": false
@@ -178,7 +178,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "f0438eda88d812e6fbf1f0449c0473c525644fe53dd2e41c133ba13e95ac8e68",
-      "scene_seed": 282708237,
+      "scene_seed": 195137990,
       "task": "place_dual_shoes",
       "unit_id": "place_dual_shoes-00",
       "void": false
@@ -195,7 +195,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "cf4a2f34b1decce286ffc89024b44e6c554d07c99aae75e08ccbf8ea46325e4c",
-      "scene_seed": 1546876535,
+      "scene_seed": 208999197,
       "task": "place_empty_cup",
       "unit_id": "place_empty_cup-00",
       "void": false
@@ -212,7 +212,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "0059f5bd64aa80fc6d385b8a1606db131f0a2ec8ad45d732ddb5177300b642d6",
-      "scene_seed": 881751532,
+      "scene_seed": 1528299613,
       "task": "place_fan",
       "unit_id": "place_fan-00",
       "void": false
@@ -229,7 +229,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "543e36c63ca0ddccfe3e34726e95b4209996ad5ebc0a99841516cf566ceefb07",
-      "scene_seed": 1689029320,
+      "scene_seed": 1580287548,
       "task": "place_mouse_pad",
       "unit_id": "place_mouse_pad-00",
       "void": false
@@ -246,7 +246,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "52f888f614dc20c3bdcbb8b4e84bace3318792d462bf65e0ca6a8796c5f08a62",
-      "scene_seed": 1302434727,
+      "scene_seed": 1741919184,
       "task": "place_object_basket",
       "unit_id": "place_object_basket-00",
       "void": false
@@ -263,7 +263,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "5194b0172c1187c4a4974fcf4e77682dfa4f781e8fb5703ac20b6a1a3ecfd947",
-      "scene_seed": 1616216376,
+      "scene_seed": 1255846584,
       "task": "place_object_scale",
       "unit_id": "place_object_scale-00",
       "void": false
@@ -280,7 +280,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "fe32f3f626bf873d77bf97cc12e58c152325c3f562bf2757c6c9abac402cb73f",
-      "scene_seed": 1374182095,
+      "scene_seed": 126155344,
       "task": "place_object_stand",
       "unit_id": "place_object_stand-00",
       "void": false
@@ -297,7 +297,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "0ef778c40295eaec35a8e601356d81657947f7fab56c052f58b565dc91b39558",
-      "scene_seed": 495177168,
+      "scene_seed": 1019665980,
       "task": "place_phone_stand",
       "unit_id": "place_phone_stand-00",
       "void": false
@@ -314,7 +314,7 @@
       "king_video": null,
       "outcome": "tie",
       "prompt_sha256": "4cda8e28cdcabc59b698340e87372042bf2161376e2fae0ff03a58e01e60876d",
-      "scene_seed": 795064882,
+      "scene_seed": 1285824138,
       "task": "place_shoe",
       "unit_id": "place_shoe-00",
       "void": false

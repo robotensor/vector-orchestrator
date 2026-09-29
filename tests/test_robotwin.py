@@ -82,8 +82,10 @@ def test_eval_run_plays_the_demonstration_directory_against_the_served_policy(
         policy_budget_s=1170.0,
         unit_timeout_s=1800.0,
         policy_log=str(tmp_path / "policy.log"),
+        step_ratio=2,
     )
     assert argv[3:5] == ["eval", "run"]
+    assert value_of(argv, "--step-ratio") == "2.0"
     assert value_of(argv, "--demo") == str(tmp_path / "prompts" / "u")
     assert value_of(argv, "--policy") == os.path.abspath("relative/policy.sock")
     assert value_of(argv, "--authkey-env") == "VECTOR_AUTHKEY"
@@ -102,6 +104,7 @@ def test_eval_run_plays_the_demonstration_directory_against_the_served_policy(
         ({"act_timeout_s": 0}, "act-timeout-s must be a positive"),
         ({"unit_timeout_s": float("inf")}, "unit-timeout-s must be a positive"),
         ({"authkey_env": "KEY=abc"}, "authkey_env must name"),
+        ({"step_ratio": 0}, "--step-ratio must be a positive"),
     ],
 )
 def test_eval_run_refuses_what_would_void_the_unit_once_it_ran(change, reason):
@@ -284,7 +287,7 @@ def test_preparing_asks_the_checkout_for_its_tasks_and_the_levels_config(checkou
     ("behaviour", "reason"),
     [
         ("no-assets", "config check exited 3: rt-bench: the harness is unavailable"),
-        ("old-api", "the harness speaks contract 1, not 2"),
+        ("old-api", f"the harness speaks contract 1, not {R.API_VERSION}"),
     ],
 )
 def test_a_checkout_that_cannot_run_the_level_is_refused(checkout, behaviour, reason):

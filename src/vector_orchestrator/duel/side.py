@@ -223,7 +223,7 @@ def run_side(
         side_deadline = min(side_deadline, deadline)
     unit_budget = float(budgets["unit"])
     policy_budget = float(budgets["policy"])
-    extra = {"act_timeout_s": float(budgets["act"])}
+    extra = {"act_timeout_s": float(budgets["act"]), "step_ratio": spec.step_ratio}
     reserve = result_reserve_s(benchmark)
     if prepared is None and refused is None:
         refused = "the submission was not prepared"

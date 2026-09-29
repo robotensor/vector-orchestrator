@@ -1,5 +1,5 @@
 {
-  "version": 9,
+  "version": 10,
   "benchmark": {
     "repo": "robotensor/RoboTwin-Vector",
     "branch": "vector"
@@ -24,6 +24,7 @@
     "place_shoe"
   ],
   "runs_per_task": 10,
+  "step_ratio": 2,
   "crown": {
     "margin": 3.0,
     "alpha": 0.05,
@@ -41,7 +42,7 @@
     "policy": 1200,
     "side": 43200,
     "duel": 86400,
-    "stall": 90,
+    "stall": 45,
     "stall_retries": 2
   }
 }

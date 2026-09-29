@@ -14,7 +14,7 @@ from vector_orchestrator.duel.orchestrate import DuelRequest
 from vector_orchestrator.duel.runtime import RuntimeUnavailable, SubmissionRefused
 from vector_orchestrator.duel.weights_runtime import WeightsPolicyRuntime
 from vector_orchestrator.ids import SubmissionRef
-from vector_orchestrator.units import deal, seed_key
+from vector_orchestrator.units import CANDIDATES, deal, seed_key
 
 SHA = "a" * 40
 HASH = "0x" + "b" * 64
@@ -79,6 +79,7 @@ def test_a_smaller_duels_units_are_the_first_of_a_larger_one_and_scenes_never_re
     small, large = deal(spec, "d", None, 2), deal(spec, "d", None, 10)
     assert [u for u in large if u["unit_id"].endswith(("-00", "-01"))] == small
     for unit in large:
+        assert len(unit["scene_seeds"]) == len(unit["demo_seeds"]) == CANDIDATES == 20
         assert not set(unit["scene_seeds"]) & set(unit["demo_seeds"])
         assert min(unit["scene_seeds"] + unit["demo_seeds"]) >= 2_000_000
     assert len(large) == 10 * len(spec.tasks)
@@ -226,7 +227,8 @@ def test_a_process_that_sleeps_is_killed_as_stalled_and_a_busy_one_is_not(tmp_pa
 
 
 def test_the_contract_watches_for_hung_simulators(vector_spec):
-    assert vector_spec.budgets["stall"] >= 60 and vector_spec.stall_retries >= 1
+    # Hung camera reads idle at under 0.07 cores; healthy work never drops under 0.25 over 5 s.
+    assert 30 <= vector_spec.budgets["stall"] <= 90 and vector_spec.stall_retries >= 1
 
 
 def test_a_benchmark_waiting_on_a_busy_policy_is_not_stalled(tmp_path, monkeypatch):

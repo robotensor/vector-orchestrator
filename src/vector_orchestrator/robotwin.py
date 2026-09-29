@@ -8,7 +8,8 @@ every result is held to it.
 
     demo make    a unit's demonstration: prompt.npz, demonstration.mp4, result.json
     demo verify  whether a prompt is the one its unit asked for, without a simulator
-    eval run     a demonstration against a served policy: result.json, evaluation.mp4
+    eval run     a demonstration against a served policy: result.json, evaluation.mp4; stopped
+                 after `step_ratio` times the expert's steps in the scored scene
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 #: The command-line contract this orchestrator drives the harness by.
-API_VERSION = 2
+API_VERSION = 3
 MODULE = "robotensor_bench.cli"
 ROOT_ENV = "ROBOTWIN_BENCH_ROOT"
 PYTHON_ENV = "ROBOTWIN_BENCH_PYTHON"
@@ -90,6 +91,16 @@ def _seconds(key: str, value: Any) -> str:
         or not 0 < float(value) < math.inf
     ):
         raise ValueError(f"{key} must be a positive, finite number of seconds, not {value!r}")
+    return repr(float(value))
+
+
+def _positive(key: str, value: Any) -> str:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, numbers.Real)
+        or not 0 < float(value) < math.inf
+    ):
+        raise ValueError(f"{key} must be a positive, finite number, not {value!r}")
     return repr(float(value))
 
 
@@ -297,6 +308,7 @@ class RoboTwin:
         policy_budget_s: float | None = None,
         unit_timeout_s: float | None = None,
         policy_log: str | None = None,
+        step_ratio: float | None = None,
     ) -> list[str]:
         """`eval run` of the demonstration at `prompt` against the policy at `policy_address`. The
         key travels as the name `authkey_env`, never as a value."""
@@ -312,6 +324,8 @@ class RoboTwin:
         ):
             if value is not None:
                 argv += [flag, _seconds(flag, value)]
+        if step_ratio is not None:
+            argv += ["--step-ratio", _positive("--step-ratio", step_ratio)]
         if policy_log:
             argv += ["--policy-log", os.path.abspath(policy_log)]
         return self.argv(
