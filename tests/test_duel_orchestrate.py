@@ -24,7 +24,6 @@ from vector_orchestrator.duel.orchestrate import (
     DuelRequest,
     HarnessUnavailable,
     Orchestrator,
-    side_share,
 )
 from vector_orchestrator.duel.runtime import RuntimeUnavailable
 from vector_orchestrator.duel.side import read_results
@@ -74,6 +73,7 @@ def orchestrator(spec, store, tmp_path, runtime=None, **kwargs):
 
     kwargs.setdefault("live", RecordingReporter(spec))
     kwargs.setdefault("benchmark", vector_fake_benchmark.FakeBenchmark())
+    kwargs.setdefault("cards", [None])  # the same one slot on any host
     return Orchestrator(
         spec, store, runtime or FakePolicyRuntime(spec), tmp_path / "runs", **kwargs
     )
@@ -151,12 +151,9 @@ def test_the_replay_challenger_dethrones_the_zero_king_on_identical_prompts(
         "done",
     ]
     assert [PHASES.index(p) for p in live.phases] == sorted(PHASES.index(p) for p in live.phases)
+    # Both sides play each unit as soon as its prompt lands, not one side after the other.
     sides = [f["side"] for f in live.frames if f["phase"] == "evaluating"]
-    assert (
-        sides[0] == "challenger"
-        and sides[-1] == "king"
-        and "challenger" not in sides[sides.index("king") :]
-    )
+    assert set(sides) == {"challenger", "king"}
     assert live.frames[-1]["units"][0]["challenger_video"], "clips reach the live view"
 
 
@@ -255,12 +252,12 @@ def test_a_duel_with_too_many_units_void_for_the_harness_is_void(duel_spec, stor
     duel = orchestrator(duel_spec, store, tmp_path, runtime, live=live, benchmark=lost)
     result = duel.run(req)
 
-    assert result.status == "void" and "1 of 3 units are void after the challenger" in result.reason
+    assert result.status == "void" and result.reason == "1 of 3 units are void"
     first, second, third = result.units
     assert not first["void"] and second["void"] and not third["void"]
     assert "the simulator lost it" in second["challenger_error"]
     assert third["challenger_success"] is None, "a unit was played for a duel already void"
-    assert [repo for repo, _ in runtime.serves] == [REPLAY_REF.repo] * 2, "the king was played"
+    assert third["unit_id"] not in {unit for _, unit in runtime.serves}
     assert len(store.iter_index()) == 1, "a void duel was published"
     assert store.head()["king"] == ZERO_REF.as_dict()
     outcome = json.loads((duel.run_dir(req) / OUTCOME_FILE).read_text())
@@ -286,8 +283,8 @@ def test_a_unit_void_on_one_side_is_void_for_both_and_a_duel_within_the_limit_st
     assert result.published, result.reason
     last = result.units[2]
     assert last["void"] and last["challenger_success"] is None and last["king_success"] is None
-    assert last["outcome"] == "tie" and last["king_error"].startswith("not played: void on the")
-    assert [unit for _, unit in runtime.serves].count(last["unit_id"]) == 1
+    # The king may have played it beside the challenger; void on one side, it is void for both.
+    assert last["outcome"] == "tie"
     record = result.record
     assert record["void"] == 1 and record["wins"] == 2
     assert event_of(store, record)["scores"]["challenger"][last["task"]] is None, (
@@ -300,18 +297,26 @@ def test_a_unit_void_on_one_side_is_void_for_both_and_a_duel_within_the_limit_st
 def test_a_restarted_duel_finishes_with_each_unit_run_once_per_side(duel_spec, store, tmp_path):
     crowned(store, duel_spec, ZERO_REF)
     req = DuelRequest(REPLAY_REF, ZERO_REF, block=2)
-    # Killed after the challenger's side and one of the king's units.
+    # Killed as it serves its fifth unit: four were played and recorded, two were not.
     with pytest.raises(Crash):
         orchestrator(
             duel_spec, store, tmp_path, FakePolicyRuntime(duel_spec, crash_on_serve=4)
         ).run(req)
     assert len(store.iter_index()) == 1
+    run_dir = orchestrator(duel_spec, store, tmp_path).run_dir(req)
+    played = {
+        (side, unit) for side in ("challenger", "king") for unit in read_results(run_dir / side)
+    }
+    assert len(played) == 4
 
     fresh = FakePolicyRuntime(duel_spec)
     duel = orchestrator(duel_spec, store, tmp_path, fresh)
     result = duel.run(req)
     assert result.published and result.record["dethroned"]
-    assert [unit for _, unit in fresh.serves] == [u["unit_id"] for u in result.units[1:]]
+    sides = {REPLAY_REF.repo: "challenger", ZERO_REF.repo: "king"}
+    replayed = sorted((sides[repo], unit) for repo, unit in fresh.serves)
+    everything = {(s, u["unit_id"]) for s in ("challenger", "king") for u in result.units}
+    assert replayed == sorted(everything - played), "a unit was played twice or not at all"
     for side in ("challenger", "king"):
         for unit in result.units:
             runs = duel.run_dir(req) / side / unit["unit_id"] / "runs.log"
@@ -502,7 +507,9 @@ def test_a_resumed_duel_keeps_the_kings_forfeit(duel_spec, store, tmp_path):
     )
 
 
-def test_too_many_void_prompts_void_the_duel_before_either_side_runs(duel_spec, store, tmp_path):
+def test_too_many_void_prompts_void_the_duel_and_nothing_after_them_runs(
+    duel_spec, store, tmp_path
+):
     import vector_fake_benchmark
 
     experts = []
@@ -521,7 +528,8 @@ def test_too_many_void_prompts_void_the_duel_before_either_side_runs(duel_spec, 
     )
     assert result.status == "void" and result.reason == "1 of 3 prompts are void"
     assert "materialize: exited 3" in result.units[1]["challenger_error"]
-    assert runtime.serves == []
+    # The first unit may have been played as soon as its prompt landed; nothing after the void.
+    assert {unit for _, unit in runtime.serves} <= {result.units[0]["unit_id"]}
     assert len(experts) == 2, "an expert ran for a duel already certain to be void"
 
 
@@ -562,38 +570,6 @@ def test_a_run_directory_holding_another_duel_is_moved_aside_and_the_duel_runs(
     assert duel.run(req).published, "a request that matches is not moved aside"
 
 
-def test_each_side_may_spend_an_even_share_of_what_materializing_left_of_the_duel():
-    budgets = {"duel": 28800, "side": 10800}
-    assert side_share(budgets, 0, 2) == 10800
-    assert side_share(budgets, 18000, 2) == 5400, "the challenger could spend the king's time"
-    assert side_share(budgets, 18000, 1) == 10800
-    assert side_share(budgets, 30000, 2) == 0.0
-
-
-def test_the_king_is_given_the_challengers_share_of_the_duel(
-    spec_doc, write_spec, store, tmp_path, monkeypatch
-):
-    from vector_orchestrator.duel import orchestrate
-
-    doc = three_units(spec_doc)
-    doc["budgets"]["side"] = doc["budgets"]["duel"]  # more than half
-    spec = write_spec(doc, name="long-sides.json")
-    store.spec = spec
-    crowned(store, spec, ZERO_REF)
-    shares = {}
-    run_side = orchestrate.run_side
-
-    def spying(spec, **kwargs):
-        shares[kwargs["side"]] = kwargs["budget_s"]
-        return run_side(spec, **kwargs)
-
-    monkeypatch.setattr(orchestrate, "run_side", spying)
-    result = orchestrator(spec, store, tmp_path).run(DuelRequest(REPLAY_REF, ZERO_REF, block=2))
-    assert result.published, result.reason
-    half = spec.budgets["duel"] / 2
-    assert shares["challenger"] == shares["king"] and half - 60 < shares["king"] <= half
-
-
 def test_a_duels_identity_is_its_spec_and_refs():
     from vector_orchestrator.spec import load_spec
 
@@ -626,3 +602,29 @@ def test_units_played_in_parallel_publish_what_one_at_a_time_publishes(
         u["unit_id"] for u in deal(duel_spec, req.duel_id(duel_spec))
     ]
     verified(store, duel_spec)
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_a_duel_runs_on_every_card_it_is_given(workers, duel_spec, store, tmp_path):
+    crowned(store, duel_spec, ZERO_REF)
+    runtime = FakePolicyRuntime(duel_spec)
+    duel = orchestrator(duel_spec, store, tmp_path, runtime, cards=["a", "b"], workers=workers)
+    req = DuelRequest(REPLAY_REF, ZERO_REF, block=2)
+    result = duel.run(req)
+    assert result.published, result.reason
+    run_dir = duel.run_dir(req)
+    seen = set()
+    listening = 0
+    for side in ("challenger", "king"):
+        for unit in result.units:
+            given = json.loads((run_dir / side / unit["unit_id"] / "given.json").read_text())
+            seen.add(given["environ"].get("CUDA_VISIBLE_DEVICES"))
+            listening += (
+                (run_dir / side / unit["unit_id"] / "policy.log").read_text().count("listening on")
+            )
+    assert seen == {"a", "b"}, "the units did not use both cards"
+    plays = 2 * len(result.units)
+    assert listening < plays, "no unit was served by a server kept from an earlier one"
+    assert not list(run_dir.glob("slots/*/pids.json")) or all(
+        json.loads(p.read_text()) == [] for p in run_dir.glob("slots/*/pids.json")
+    ), "a kept server outlived its duel"

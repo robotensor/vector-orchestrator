@@ -14,6 +14,7 @@ import math
 import os
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -206,6 +207,51 @@ def group_cpu_seconds(pgid: int | Iterable[int]) -> float:
     return total / float(tick)
 
 
+class Running:
+    """The process groups `run_argv` has running, so a duel that stops can end them at once:
+    units run in worker threads, which an interrupt of the main thread does not reach."""
+
+    def __init__(self) -> None:
+        self._groups: set[int] = set()
+        self._lock = threading.Lock()
+        self._stopping = False
+
+    def add(self, pgid: int) -> None:
+        with self._lock:
+            self._groups.add(pgid)
+            stopping = self._stopping
+        if stopping:  # started after `stop`: it is not let run either
+            _killpg(pgid)
+
+    def discard(self, pgid: int) -> None:
+        with self._lock:
+            self._groups.discard(pgid)
+
+    def stop(self) -> list[int]:
+        """Kill every group running, and every one started until `resume`."""
+        with self._lock:
+            self._stopping = True
+            groups = sorted(self._groups)
+        for pgid in groups:
+            _killpg(pgid)
+        return groups
+
+    def resume(self) -> None:
+        with self._lock:
+            self._stopping = False
+
+
+def _killpg(pgid: int) -> None:
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+#: Every benchmark subprocess of this process that is running now.
+RUNNING = Running()
+
+
 def run_argv(
     argv: list[str],
     *,
@@ -249,6 +295,7 @@ def run_argv(
             return Completed(None, False, str(exc), time.monotonic() - started, "")
         returncode: int | None = None
         timed_out = stalled = False
+        RUNNING.add(proc.pid)
         try:
             if ledger is not None:
                 ledger.started(proc.pid)
@@ -271,6 +318,7 @@ def run_argv(
             # The session is the benchmark's alone (start_new_session), so this reaches only what
             # it started - including children still running after the direct child exited.
             _kill_group(proc)
+            RUNNING.discard(proc.pid)
             if ledger is not None:
                 ledger.ended(proc.pid)
     return Completed(

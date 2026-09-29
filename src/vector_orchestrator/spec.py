@@ -9,7 +9,7 @@ step_ratio     a rollout stops after this many times the expert's steps in its s
                task's own step limit): lower it as models get faster
 crown          margin (points), alpha (sign test), max_void (fraction of units)
 model          the architecture submissions hold, and the digest of its tensor manifest
-budgets        seconds: policy_start, act, materialize, unit, policy, side, duel, stall;
+budgets        seconds: policy_start, act, materialize, unit, policy, duel, stall;
                and stall_retries
 """
 
@@ -29,7 +29,7 @@ SPEC_ENV = "VECTOR_ORCHESTRATOR_SPEC"
 TASK_RE = re.compile(r"[a-z][a-z0-9_]*")
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*")
 HEX64_RE = re.compile(r"[0-9a-f]{64}")
-BUDGETS = ("policy_start", "act", "materialize", "unit", "policy", "side", "duel", "stall")
+BUDGETS = ("policy_start", "act", "materialize", "unit", "policy", "duel", "stall")
 
 
 class SpecError(ValueError):

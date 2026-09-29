@@ -1,7 +1,10 @@
-"""One side of a duel: every unit in order, a freshly served policy for each, resumable.
+"""One side of a duel: every unit, a served policy for each, resumable.
 
-Units run in the order the duel lists them - the spec's tasks in order, each task's runs in
-order. For each one:
+Alone, units run in the order the duel lists them - the spec's tasks in order, each task's runs in
+order - each against a freshly served policy. With the duel's `Slots` they run as their prompts
+land, each in a slot on one card, against the policy server that slot keeps between units
+(`runtime.ServerPool`), beside the other side's units and the demonstrations still being made. For
+each one:
 
 1. the prompt it was materialized with is re-hashed (both sides must run from the same bytes);
 2. the runtime serves the side's policy for this unit alone (`runtime.serve`);
@@ -51,6 +54,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
@@ -203,22 +207,26 @@ def run_side(
     workers: int = 1,
     stall_s: float | None = None,
     stall_retries: int = 0,
+    slots: Any = None,
+    abort: threading.Event | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Every unit of one side, by unit id. `deadline` is the duel's, as a `time.monotonic()`;
-    `budget_s` is the side's wall clock (`budgets.side_wall_seconds` unless the duel gives it
-    less); `void_units` maps the units already void for the duel to the reason. `stop`, asked
-    before each unit not yet finished, ends the side there when it says so (the duel is already
-    certain to be void): nothing more is played for a result that cannot stand.
+    `budget_s`, when given, caps the side's own wall clock; `void_units` maps the units already
+    void for the duel to the reason, and is asked again as each unit starts, so it may be a live
+    view of the other side. `stop`, asked before each unit not yet finished, ends the side there
+    when it says so (the duel is already certain to be void): nothing more is played for a result
+    that cannot stand.
 
-    With `workers` above 1, that many units are played at once, each with its own policy server
-    and benchmark subprocess; `stop` and the wall clocks are asked as each one starts, and each
-    unit is recorded as it finishes (so `results.jsonl` is in finishing order)."""
+    With `slots` (or `workers` above 1), units are played as their prompts land (`prompts` may be
+    a live `Materialized`), one in each slot at a time; `stop` and the wall clocks are asked as
+    each one starts, and each unit is recorded as it finishes (so `results.jsonl` is in finishing
+    order). `abort` set stops the side at once: a unit cut short by it is not recorded, so a
+    resumed duel plays it again."""
     side_dir.mkdir(parents=True, exist_ok=True)
     done = read_results(side_dir)
     budgets = spec.budgets
     spent = sum(float(r.get("wall_s") or 0.0) for r in done.values())
-    side_budget = float(budgets["side"]) if budget_s is None else float(budget_s)
-    side_deadline = time.monotonic() + side_budget - spent
+    side_deadline = math.inf if budget_s is None else time.monotonic() + float(budget_s) - spent
     if deadline is not None:
         side_deadline = min(side_deadline, deadline)
     unit_budget = float(budgets["unit"])
@@ -228,19 +236,26 @@ def run_side(
     if prepared is None and refused is None:
         refused = "the submission was not prepared"
 
+    lock = threading.Lock()
+
     def record_unit(unit: Mapping[str, Any], outcome: Outcome, prompt_sha: str | None) -> None:
         unit_id = str(unit["unit_id"])
-        if outcome.void:
-            log.warning("%s %s void: %s", side, unit_id, outcome.error)
-        elif outcome.success is False and outcome.error:
-            log.info("%s %s failed: %s", side, unit_id, outcome.error)
-        record = unit_record(unit, outcome, side_dir, prompt_sha)
-        _append(side_dir, record)
-        done[unit_id] = record
-        if on_unit is not None:
-            on_unit(unit, record)
+        with lock:
+            if outcome.void:
+                log.warning("%s %s void: %s", side, unit_id, outcome.error)
+            elif outcome.success is False and outcome.error:
+                log.info("%s %s failed: %s", side, unit_id, outcome.error)
+            record = unit_record(unit, outcome, side_dir, prompt_sha)
+            _append(side_dir, record)
+            done[unit_id] = record
+            if on_unit is not None:
+                on_unit(unit, record)
 
-    if workers > 1:
+    if slots is None and workers > 1:
+        from .slots import Slots
+
+        slots = Slots(workers, [None], side_dir / "slots")
+    if slots is not None:
         _run_pooled(
             units,
             done=done,
@@ -260,9 +275,10 @@ def run_side(
             stop=stop,
             on_start=on_start,
             record_unit=record_unit,
-            workers=workers,
+            slots=slots,
             stall_s=stall_s,
             stall_retries=stall_retries,
+            abort=abort,
         )
         return done
 
@@ -354,56 +370,83 @@ def _run_pooled(
     stop: Callable[[], bool] | None,
     on_start: Callable[[Mapping[str, Any]], None] | None,
     record_unit: Callable[[Mapping[str, Any], Outcome, str | None], None],
-    workers: int,
+    slots: Any,
     stall_s: float | None = None,
     stall_retries: int = 0,
+    abort: threading.Event | None = None,
 ) -> None:
-    """`run_side`'s units, `workers` at a time. What needs no play is recorded at once, in this
-    thread; a unit that is played runs `_play` in a worker, and is recorded here as it finishes."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    """`run_side`'s units in `slots`, handed out as their prompts land. What needs no play is
+    recorded at once; a unit that is played waits for a slot, runs `_play` there against the slot's
+    kept server, and is recorded by the worker as it finishes."""
+    from concurrent.futures import ThreadPoolExecutor
 
-    def job(unit: Mapping[str, Any], prompt: Any) -> Outcome | None:
+    from .slots import PLAY
+
+    by_id = {str(unit["unit_id"]): unit for unit in units}
+    handle = str(prepared.handle) if prepared is not None else None
+
+    def aborted() -> bool:
+        return abort is not None and abort.is_set()
+
+    def job(unit: Mapping[str, Any], prompt: Any, prompt_sha: str | None) -> None:
+        try:
+            play(unit, prompt, prompt_sha)
+        except BaseException:
+            # Whatever broke stops the duel now, not once every prompt has been handed out.
+            if abort is not None:
+                abort.set()
+            prompts.finish(failed=True)
+            raise
+
+    def play(unit: Mapping[str, Any], prompt: Any, prompt_sha: str | None) -> None:
         unit_id = str(unit["unit_id"])
-        if stop is not None and stop():
-            return None
-        if time.monotonic() >= side_deadline:
-            return voided("the side ran out of its wall-clock budget")
-        if (changed := prompt.changed()) is not None:
-            return voided(f"no prompt: {changed}")
-        if on_start is not None:
-            on_start(unit)
-        outcome = _play(
-            runtime,  # type: ignore[arg-type]
-            prepared,  # type: ignore[arg-type]
-            benchmark,
-            unit,
-            side=side,
-            prompt_path=str(prompt.path),
-            unit_dir=side_dir / unit_id,
-            deadline=min(time.monotonic() + unit_budget, side_deadline),
-            extra=extra,
-            policy_budget_s=policy_budget,
-            result_reserve_s=reserve,
-            stall_s=stall_s,
-            stall_retries=stall_retries,
-        )
-        reported = outcome.extra.get("prompt_sha256")
-        if (changed := prompt.changed()) is not None:
-            return voided(f"no prompt: {changed} during the unit", wall_s=outcome.wall_s)
-        if reported is not None and reported != prompt.sha256:
-            return voided(
-                f"no prompt: the benchmark read a prompt hashing to {str(reported)[:12]}..., "
-                f"not the recorded {str(prompt.sha256)[:12]}...",
-                wall_s=outcome.wall_s,
-            )
-        return outcome
+        with slots.take(PLAY, handle) as slot:
+            if aborted() or (stop is not None and stop()):
+                return
+            if void_units and unit_id in void_units:
+                outcome = voided(f"not played: {void_units[unit_id]}")
+            elif time.monotonic() >= side_deadline:
+                outcome = voided("the side ran out of its wall-clock budget")
+            elif (changed := prompt.changed()) is not None:
+                outcome = voided(f"no prompt: {changed}")
+            else:
+                if on_start is not None:
+                    on_start(unit)
+                outcome = _play(
+                    runtime,  # type: ignore[arg-type]
+                    prepared,  # type: ignore[arg-type]
+                    benchmark,
+                    unit,
+                    side=side,
+                    prompt_path=str(prompt.path),
+                    unit_dir=side_dir / unit_id,
+                    deadline=min(time.monotonic() + unit_budget, side_deadline),
+                    extra=extra,
+                    policy_budget_s=policy_budget,
+                    result_reserve_s=reserve,
+                    stall_s=stall_s,
+                    stall_retries=stall_retries,
+                    env=slot.env,
+                    pool=slot.servers,
+                )
+                reported = outcome.extra.get("prompt_sha256")
+                if (changed := prompt.changed()) is not None:
+                    outcome = voided(f"no prompt: {changed} during the unit", wall_s=outcome.wall_s)
+                elif reported is not None and reported != prompt.sha256:
+                    outcome = voided(
+                        f"no prompt: the benchmark read a prompt hashing to "
+                        f"{str(reported)[:12]}..., not the recorded {str(prompt.sha256)[:12]}...",
+                        wall_s=outcome.wall_s,
+                    )
+        if not aborted():
+            record_unit(unit, outcome, prompt_sha)
 
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"side-{side}") as pool:
-        futures = {}
-        for unit in units:
-            unit_id = str(unit["unit_id"])
-            if unit_id in done:
-                continue
+    with ThreadPoolExecutor(max_workers=len(slots), thread_name_prefix=f"side-{side}") as pool:
+        futures = []
+        for unit_id in prompts.ready([u for u in by_id if u not in done]):
+            if aborted() or (stop is not None and stop()):
+                break
+            unit = by_id[unit_id]
             prompt = prompts.prompts.get(unit_id)
             prompt_sha = prompt.sha256 if prompt is not None and not prompt.void else None
             if prompt is None or prompt.void:
@@ -423,13 +466,9 @@ def _run_pooled(
                 reap_ledger(unit_dir)
                 moved = move_aside(unit_dir, "interrupted")
                 log.warning("%s %s: an interrupted attempt is kept at %s", side, unit_id, moved)
-            futures[pool.submit(job, unit, prompt)] = (unit, prompt_sha)
-        for future in as_completed(futures):
-            unit, prompt_sha = futures[future]
-            outcome = future.result()
-            if outcome is None:
-                continue
-            record_unit(unit, outcome, prompt_sha)
+            futures.append(pool.submit(job, unit, prompt, prompt_sha))
+        for future in futures:
+            future.result()
 
 
 def _play(
@@ -447,10 +486,13 @@ def _play(
     result_reserve_s: float,
     stall_s: float | None = None,
     stall_retries: int = 0,
+    env: Mapping[str, str] | None = None,
+    pool: Any = None,
 ) -> Outcome:
-    """`_play_once`, started again - a fresh policy server and a fresh benchmark - when the
-    benchmark stalled (a hung simulator: nobody's doing), at most `stall_retries` times and
-    within the same `deadline`. The wall time recorded is all of it."""
+    """`_play_once`, started again - a fresh benchmark, and a fresh policy server unless a kept
+    one is still serving - when the benchmark stalled (a hung simulator: nobody's doing), at most
+    `stall_retries` times and within the same `deadline`. The wall time recorded is all of it.
+    `env` is the slot's (its card) and `pool` its kept policy server."""
     started = time.monotonic()
     attempt = 0
     while True:
@@ -467,6 +509,8 @@ def _play(
             policy_budget_s=policy_budget_s,
             result_reserve_s=result_reserve_s,
             stall_s=stall_s,
+            env=env,
+            pool=pool,
         )
         stalled = outcome.void and bool(outcome.extra.get("stalled"))
         if not stalled or attempt >= stall_retries or time.monotonic() >= deadline:
@@ -495,6 +539,8 @@ def _play_once(
     policy_budget_s: float,
     result_reserve_s: float,
     stall_s: float | None = None,
+    env: Mapping[str, str] | None = None,
+    pool: Any = None,
 ) -> Outcome:
     """One unit against a policy served for it, attributed to whoever ended it.
 
@@ -506,7 +552,7 @@ def _play_once(
     started = time.monotonic()
     end: PolicyEnd | None = None
     try:
-        with runtime.serve(prepared, workdir=unit_dir) as served:
+        with runtime.serve(prepared, workdir=unit_dir, env=env, pool=pool) as served:
             start_s = time.monotonic() - started
             if start_s >= policy_budget_s:
                 outcome = failed(
@@ -514,9 +560,10 @@ def _play_once(
                     f"{policy_budget_s:g}s for the unit"
                 )
             else:
-                env = {
+                environ = {
                     **benchmark_environment(os.environ, served.authkey_env),
                     **served.env,
+                    **(env or {}),
                 }
                 copied = (
                     nullcontext(None)
@@ -543,7 +590,7 @@ def _play_once(
                         policy_address=served.address,
                         authkey_env=served.authkey_env,
                         timeout_s=timeout_s,
-                        env=env,
+                        env=environ,
                         extra=limits,
                         ledger=Ledger(unit_dir),
                         stall_s=stall_s,

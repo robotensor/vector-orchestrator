@@ -1,7 +1,12 @@
 """A duel from request to published record.
 
-    fetching -> checking -> materializing -> evaluating(challenger) -> evaluating(king)
+    fetching -> checking -> materializing + evaluating(challenger) + evaluating(king)
              -> publishing -> done | failed
+
+**Where it runs.** Once both sides are checked, the demonstrations and both sides' units run
+together in the duel's `Slots`: `workers` slots on each GPU of the host (`slots.gpus`), a job in a
+slot at a time, on that slot's card. A unit is played by both sides as soon as its prompt lands,
+before new demonstrations are made, and each slot keeps its policy server between units.
 
 **Identity.** A duel's id is `ids.duel_id(spec.version, challenger, king)` and its units are
 `units.deal(spec, duel_id, entropy)`, pure functions of those, so anyone holding the record can
@@ -15,7 +20,8 @@ deal them again. Its event id adds the block. Everything the duel keeps on this 
     outcome.json                  what was decided: published (with the record), refused or void
     failed.txt                    why the last attempt stopped, for a duel that did not finish
 
-**Resuming.** Every stage is resumable from that directory: prompts are re-used after their hash
+**Resuming.** Every stage is resumable from that directory (an interrupt ends what the slots were
+running and records none of it): prompts are re-used after their hash
 is checked, a side runs only the units its results file does not hold, and a duel first looks for
 its own event id in the index, so a duel killed at any point and run again finishes with each unit
 run once per side and at most one record. One found there is not run again: its head is rebuilt
@@ -34,9 +40,8 @@ returns it.
   published, and `outcome.json` says why.
 - Void: the duel ran and cannot stand. The crown does not move, nothing is published, and
   `outcome.json` says why. A duel is void when more than `crown.max_void` of its units are void
-  (checked after materializing and after each side, so the king is not run for a duel the
-  challenger's side already voided). A unit is void only for a harness cause (`side`); what a
-  side's own submission does to a unit is that side's failure.
+  (asked before every job, so nothing more is run once it is certain). A unit is void only for a
+  harness cause (`side`); what a side's own submission does to a unit is that side's failure.
 - A king whose submission is refused (its repository gone or private) forfeits: every one of its units is a failure, the duel is
   scored and published as any other with the note `king forfeit: <reason>`, and the challenger
   takes the crown if its own average clears the margin. The forfeit is recorded in
@@ -56,8 +61,10 @@ it crowns. A genesis is void on the same rule as a duel.
 from __future__ import annotations
 
 import logging
+import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +72,7 @@ from typing import Any
 
 from ..ids import SubmissionRef, duel_id, event_id
 from ..live import LiveReporter, build_frame
+from ..runner import RUNNING
 from ..spec import Spec
 from ..store.records import index_record, media_shas, now_iso, unit_row
 from ..store.writer import Store, atomic_write_json, read_json
@@ -74,6 +82,7 @@ from .materialize import Materialized, Prompt, materialize_units
 from .orphans import move_aside, reap_run_root
 from .runtime import PreparedSubmission, RuntimeUnavailable, SubmissionRefused
 from .side import read_results, run_side
+from .slots import Slots, gpus
 
 log = logging.getLogger(__name__)
 
@@ -280,15 +289,20 @@ class Orchestrator:
         mirror: Any | None = None,
         benchmark: Any | None = None,
         workers: int = 1,
+        cards: list[str | None] | None = None,
     ) -> None:
         self.spec = spec
         self.store = store
         #: Serves each side's policy (`runtime.SubprocessPolicyRuntime` or the weights runtime).
         self.runtime = runtime
         self.run_root = Path(run_root)
-        #: Units materialized and played at once, each a subprocess (and a policy server) of its
-        #: own. One unless the host has the GPU memory for more.
+        #: Units run at once on each GPU, each a simulator and a policy server of its own: as many
+        #: as one card's memory holds.
         self.workers = max(1, int(workers))
+        #: The host's GPUs (`slots.gpus`): CUDA_VISIBLE_DEVICES, else what nvidia-smi lists.
+        self.cards = list(cards) if cards is not None else gpus()
+        #: What the duel's workers share: its rows, live frames and the store.
+        self._lock = threading.RLock()
         self.live = live or LiveReporter(None, None)
         self.mirror = mirror
         #: The RoboTwin-Vector checkout (`robotwin.RoboTwin`), found on first use; a test's fake.
@@ -459,34 +473,46 @@ class Orchestrator:
             log.warning("duel %s: the king forfeits: %s", duel.event_id[:16], duel.forfeit)
             atomic_write_json(duel.run_dir / FORFEIT_FILE, {"side": "king", "reason": duel.forfeit})
 
-        # ---- materializing
+        # ---- materializing and evaluating, together in the slots
         self._post(
             duel, force=True, phase="materializing", message="materializing the demonstrations"
         )
-        duel.prompts = materialize_units(
-            spec,
-            duel.unit_defs,
-            duel.run_dir / "prompts",
-            benchmark=self.benchmark,
-            deadline=duel.deadline,
-            stop=lambda: self._certainly_void(duel),
-            on_prompt=lambda unit, prompt: self._on_prompt(duel, unit, prompt),
-            workers=self.workers,
-            stall_s=spec.budgets["stall"],
-            stall_retries=spec.stall_retries,
-        )
+        duel.prompts = Materialized(root=duel.run_dir / "prompts", prompts={}, done=False)
+        slots = Slots(self.workers, self.cards, duel.run_dir / "slots")
+        abort = threading.Event()
+        try:
+            with ThreadPoolExecutor(max_workers=3, thread_name_prefix="duel") as phases:
+                jobs = [phases.submit(self._materialize, duel, slots, abort)]
+                jobs += [phases.submit(self._evaluate, duel, side, slots, abort) for side, _ in sides]
+                try:
+                    wait(jobs, return_when=FIRST_EXCEPTION)
+                    for job in jobs:
+                        if job.done() and job.exception() is not None:
+                            job.result()
+                    for job in jobs:
+                        job.result()
+                except BaseException:
+                    # An interrupt, or one phase failing: end what the slots run - none of it is
+                    # recorded - so the other phases stop too, and the duel resumes from here.
+                    abort.set()
+                    duel.prompts.finish(failed=True)
+                    RUNNING.stop()
+                    slots.close()
+                    raise
+        finally:
+            slots.close()
+            RUNNING.resume()
+        self._flush_media(duel, force=True)
         self.push_touched()
         if score.too_void(duel.units, spec.max_void):
-            return self._void(duel, f"{duel.prompts.void} of {len(duel.units)} prompts are void")
-
-        # ---- evaluating
-        for side, _ in sides:
-            self._evaluate(duel, side)
-            if score.too_void(duel.units, spec.max_void):
-                void = sum(1 for u in duel.units if u["void"])
-                return self._void(
-                    duel, f"{void} of {len(duel.units)} units are void after the {side}'s side"
-                )
+            void = sum(1 for u in duel.units if u["void"])
+            prompts = duel.prompts.void
+            what = (
+                f"{prompts} of {len(duel.units)} prompts are void"
+                if prompts and prompts == void
+                else f"{void} of {len(duel.units)} units are void"
+            )
+            return self._void(duel, what)
         return self._publish(duel)
 
     # -- phases -----------------------------------------------------------------------------
@@ -509,7 +535,27 @@ class Orchestrator:
             sides.append(("king", req.king))
         return sides
 
+    def _materialize(self, duel: _Duel, slots: Slots, abort: threading.Event) -> None:
+        materialize_units(
+            self.spec,
+            duel.unit_defs,
+            duel.run_dir / "prompts",
+            benchmark=self.benchmark,
+            deadline=duel.deadline,
+            stop=lambda: self._certainly_void(duel),
+            on_prompt=lambda unit, prompt: self._on_prompt(duel, unit, prompt),
+            stall_s=self.spec.budgets["stall"],
+            stall_retries=self.spec.stall_retries,
+            slots=slots,
+            into=duel.prompts,
+            abort=abort,
+        )
+
     def _on_prompt(self, duel: _Duel, unit: Mapping[str, Any], prompt: Prompt) -> None:
+        with self._lock:
+            self._record_prompt(duel, prompt)
+
+    def _record_prompt(self, duel: _Duel, prompt: Prompt) -> None:
         row = duel.row(prompt.unit_id)
         if prompt.void:
             row["void"] = True
@@ -528,20 +574,15 @@ class Orchestrator:
         """Whether the duel is void whatever its remaining units do: void units only ever add up,
         so once more than `crown.max_void` of all units are void, nothing played or materialized
         after can make it stand."""
-        return score.too_void(duel.units, self.spec.max_void)
+        with self._lock:
+            return score.too_void(duel.units, self.spec.max_void)
 
-    def _evaluate(self, duel: _Duel, side: str) -> None:
+    def _evaluate(self, duel: _Duel, side: str, slots: Slots, abort: threading.Event) -> None:
         side_dir = duel.run_dir / side
-        self._post(duel, force=True, phase="evaluating", side=side, message=f"evaluating {side}")
-        # What an earlier run of this duel finished is merged before anything new runs.
-        for record in read_results(side_dir).values():
-            self._merge(duel, side, record)
-        other = _other(side)
-        void_units = {
-            unit_id: f"void on the {other}'s side: {record.get('error')}"
-            for unit_id, record in read_results(duel.run_dir / other).items()
-            if record.get("void")
-        }
+        with self._lock:
+            # What an earlier run of this duel finished is merged before anything new runs.
+            for record in read_results(side_dir).values():
+                self._merge(duel, side, record)
         run_side(
             self.spec,
             side=side,
@@ -553,31 +594,28 @@ class Orchestrator:
             prepared=duel.prepared.get(side),
             refused=duel.forfeit if side == "king" else None,
             deadline=duel.deadline,
-            budget_s=side_share(
-                self.spec.budgets,
-                sum(p.wall_s for p in duel.prompts.prompts.values()) if duel.prompts else 0.0,
-                len(self._sides(duel.req)),
-            ),
-            void_units=void_units,
+            void_units=_VoidOn(self, duel, _other(side)),
             stop=lambda: self._certainly_void(duel),
             on_start=lambda unit: self._on_start(duel, side, unit),
             on_unit=lambda unit, record: self._on_unit(duel, side, record),
-            workers=self.workers,
             stall_s=self.spec.budgets["stall"],
             stall_retries=self.spec.stall_retries,
+            slots=slots,
+            abort=abort,
         )
-        self._flush_media(duel, force=True)
 
     def _on_start(self, duel: _Duel, side: str, unit: Mapping[str, Any]) -> None:
-        duel.current = {"unit_id": unit["unit_id"], "side": side}
-        self._post(duel, message=f"{side}: {unit['unit_id']}")
+        with self._lock:
+            duel.current = {"unit_id": unit["unit_id"], "side": side}
+            self._post(duel, phase="evaluating", side=side, message=f"{side}: {unit['unit_id']}")
 
     def _on_unit(self, duel: _Duel, side: str, record: dict[str, Any]) -> None:
-        self._merge(duel, side, record)
-        self._flush_media(duel)
-        state = "void" if record["void"] else ("ok" if record["success"] else "fail")
-        duel.current = None
-        self._post(duel, message=f"{side}: {record['unit_id']} {state}")
+        with self._lock:
+            self._merge(duel, side, record)
+            self._flush_media(duel)
+            state = "void" if record["void"] else ("ok" if record["success"] else "fail")
+            duel.current = None
+            self._post(duel, message=f"{side}: {record['unit_id']} {state}")
 
     def _merge(self, duel: _Duel, side: str, record: Mapping[str, Any]) -> None:
         """One side's unit record into the published row. Void on either side is void for both."""
@@ -605,6 +643,10 @@ class Orchestrator:
     def _flush_media(self, duel: _Duel, *, force: bool = False) -> None:
         """Finished clips into the store every `MEDIA_FLUSH_UNITS` units, so the dashboard can
         play them while the duel runs; mirrored when there is a mirror."""
+        with self._lock:
+            self._flush_media_locked(duel, force)
+
+    def _flush_media_locked(self, duel: _Duel, force: bool) -> None:
         if not duel.pending_media or (not force and len(duel.pending_media) < MEDIA_FLUSH_UNITS):
             return
         for (side, unit_id), path in list(duel.pending_media.items()):
@@ -802,6 +844,10 @@ class Orchestrator:
             self.store.touched.update(files)
 
     def _post(self, duel: _Duel, *, force: bool = False, **changes: Any) -> None:
+        with self._lock:
+            self._post_locked(duel, force, changes)
+
+    def _post_locked(self, duel: _Duel, force: bool, changes: Mapping[str, Any]) -> None:
         for key, value in changes.items():
             setattr(duel, key, value)
         req = duel.req
@@ -838,12 +884,29 @@ def _as_king(row: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-def side_share(budgets: Mapping[str, Any], materialized_s: float, sides: int) -> float:
-    """The wall clock each side of a duel may spend: `budgets.side`, but never more than an even
-    share of what materializing left of `budgets.duel`. The challenger plays first, and without a
-    share it could spend the king's time, voiding the king's last units for both."""
-    left = float(budgets["duel"]) - float(materialized_s)
-    return max(0.0, min(float(budgets["side"]), left / max(1, sides)))
+class _VoidOn(Mapping[str, str]):
+    """The units a side's results made void, read live from the duel's rows: the other side does
+    not play them."""
+
+    def __init__(self, orchestrator: Orchestrator, duel: _Duel, side: str) -> None:
+        self._orchestrator, self._duel, self._side = orchestrator, duel, side
+
+    def _void(self) -> dict[str, str]:
+        with self._orchestrator._lock:
+            return {
+                str(row["unit_id"]): f"void on the {self._side}'s side: {row.get(f'{self._side}_error')}"
+                for row in self._duel.units
+                if row["void"] and row.get(f"{self._side}_error") is not None
+            }
+
+    def __getitem__(self, unit_id: str) -> str:
+        return self._void()[unit_id]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._void())
+
+    def __len__(self) -> int:
+        return len(self._void())
 
 
 def _work_seconds(run_dir: Path) -> float:

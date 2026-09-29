@@ -40,7 +40,6 @@
     "materialize": 2400,
     "unit": 1800,
     "policy": 1200,
-    "side": 43200,
     "duel": 86400,
     "stall": 45,
     "stall_retries": 2

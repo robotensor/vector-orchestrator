@@ -7,7 +7,9 @@ of what makes a duel fair on RoboTwin: an expert's trajectory is not reproducibl
 (CuRobo's IK seed generators live as long as the environment, and planning retries stop on a wall
 clock), so a prompt produced per side would differ per side.
 
-For each unit, in order, and resumably:
+With the duel's `Slots`, each unit's demonstration runs in a slot on one card, and the prompts go
+into a live `Materialized` the sides read as they land, so a unit is played while later ones are
+still being made. For each unit, and resumably:
 
 1. `materialize_command(unit, out_dir)` runs as a subprocess with the allow-listed environment and
    `budgets.materialize`, in `<root>/<unit_id>/`.
@@ -35,9 +37,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -127,12 +130,47 @@ class Prompt:
 
 @dataclass
 class Materialized:
+    """A duel's prompts. Made live (`done=False`), it fills as they land and `ready` hands them to
+    the sides; `finish` says no more will come, `failed` that materializing stopped short."""
+
     root: Path
     prompts: dict[str, Prompt]
+    done: bool = True
+    failed: bool = False
+    _cond: threading.Condition = field(
+        default_factory=threading.Condition, repr=False, compare=False
+    )
 
     @property
     def void(self) -> int:
         return sum(1 for p in self.prompts.values() if p.void)
+
+    def put(self, prompt: Prompt) -> None:
+        with self._cond:
+            self.prompts[prompt.unit_id] = prompt
+            self._cond.notify_all()
+
+    def finish(self, *, failed: bool = False) -> None:
+        with self._cond:
+            self.done, self.failed = True, self.failed or failed
+            self._cond.notify_all()
+
+    def ready(self, unit_ids: Iterable[str]) -> Iterator[str]:
+        """`unit_ids` as their prompts land, in landing order; once done, the ones that never got
+        one - unless materializing failed, when nothing more is handed out."""
+        left = list(unit_ids)
+        while left:
+            with self._cond:
+                while not self.done and not any(u in self.prompts for u in left):
+                    self._cond.wait()
+                if self.failed:
+                    return
+                landed = [u for u in left if u in self.prompts]
+                if not landed and self.done:
+                    landed = list(left)
+            for unit_id in landed:
+                left.remove(unit_id)
+                yield unit_id
 
 
 def read_manifest(root: Path) -> dict[str, Prompt]:
@@ -173,8 +211,15 @@ def materialize_units(
     workers: int = 1,
     stall_s: float | None = None,
     stall_retries: int = 0,
+    slots: Any = None,
+    into: Materialized | None = None,
+    abort: threading.Event | None = None,
 ) -> Materialized:
     """Every unit's prompt under `root`, re-using what an earlier run of this duel produced.
+
+    With `slots` (`slots.Slots`) each unit is made in a slot, on its card; `into` is a live
+    `Materialized` to fill as prompts land, finished on the way out. `abort` set stops it at once:
+    a unit cut short by it is not recorded, so a resumed duel makes it again.
 
     `deadline` is the duel's, as a `time.monotonic()`: no unit's materialization runs past it, and
     a unit not started by then has no prompt. `stop`, asked before each unit, ends the loop early
@@ -186,23 +231,66 @@ def materialize_units(
     budget = float(spec.budgets["materialize"]) if timeout_s is None else timeout_s
     environ = dict(benchmark_environment(os.environ, "") if env is None else env)
     done = read_manifest(root)
-    prompts: dict[str, Prompt] = {}
-    if workers > 1:
-        return _materialize_pooled(
-            units,
-            root,
-            done=done,
-            prompts=prompts,
-            benchmark=benchmark,
-            env=environ,
-            budget=budget,
-            deadline=deadline,
-            stop=stop,
-            on_prompt=on_prompt,
-            workers=workers,
-            stall_s=stall_s,
-            stall_retries=stall_retries,
-        )
+    result = into if into is not None else Materialized(root=root, prompts={})
+    try:
+        if slots is None and workers > 1:
+            from .slots import Slots
+
+            slots = Slots(workers, [None], root / "slots")
+        if slots is not None:
+            _materialize_pooled(
+                units,
+                root,
+                done=done,
+                result=result,
+                benchmark=benchmark,
+                env=environ,
+                budget=budget,
+                deadline=deadline,
+                stop=stop,
+                on_prompt=on_prompt,
+                slots=slots,
+                stall_s=stall_s,
+                stall_retries=stall_retries,
+                abort=abort,
+            )
+        else:
+            _materialize_in_order(
+                units,
+                root,
+                done=done,
+                result=result,
+                benchmark=benchmark,
+                env=environ,
+                budget=budget,
+                deadline=deadline,
+                stop=stop,
+                on_prompt=on_prompt,
+                stall_s=stall_s,
+                stall_retries=stall_retries,
+            )
+    except BaseException:
+        result.finish(failed=True)
+        raise
+    result.finish(failed=abort is not None and abort.is_set())
+    return result
+
+
+def _materialize_in_order(
+    units: Iterable[Mapping[str, Any]],
+    root: Path,
+    *,
+    done: Mapping[str, Prompt],
+    result: Materialized,
+    benchmark: Any,
+    env: Mapping[str, str],
+    budget: float,
+    deadline: float | None,
+    stop: Callable[[], bool] | None,
+    on_prompt: Callable[[Mapping[str, Any], Prompt], None] | None,
+    stall_s: float | None,
+    stall_retries: int,
+) -> None:
     for unit in units:
         if stop is not None and stop():
             break
@@ -226,7 +314,7 @@ def materialize_units(
                 benchmark,
                 unit,
                 root / unit_id,
-                env=environ,
+                env=env,
                 timeout_s=left,
                 stall_s=stall_s,
                 stall_retries=stall_retries,
@@ -234,10 +322,9 @@ def materialize_units(
             _append(root, prompt)
         if prompt.void:
             log.warning("unit %s has no prompt: %s", unit_id, prompt.error)
-        prompts[unit_id] = prompt
+        result.put(prompt)
         if on_prompt is not None:
             on_prompt(unit, prompt)
-    return Materialized(root=root, prompts=prompts)
 
 
 def _materialize_pooled(
@@ -245,51 +332,75 @@ def _materialize_pooled(
     root: Path,
     *,
     done: Mapping[str, Prompt],
-    prompts: dict[str, Prompt],
+    result: Materialized,
     benchmark: Any,
     env: Mapping[str, str],
     budget: float,
     deadline: float | None,
     stop: Callable[[], bool] | None,
     on_prompt: Callable[[Mapping[str, Any], Prompt], None] | None,
-    workers: int,
+    slots: Any,
     stall_s: float | None = None,
     stall_retries: int = 0,
-) -> Materialized:
-    """`materialize_units` with `workers` units at a time. Only this thread writes the manifest
-    and calls `on_prompt`; a worker runs one unit's subprocess."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    abort: threading.Event | None = None,
+) -> None:
+    """`materialize_units` with a unit in each of `slots` at a time. A unit's prompt is recorded
+    (the manifest line, `on_prompt`) by the worker that made it, one at a time."""
+    from concurrent.futures import ThreadPoolExecutor
 
-    def finish(unit: Mapping[str, Any], prompt: Prompt) -> None:
-        if prompt.void:
-            log.warning("unit %s has no prompt: %s", prompt.unit_id, prompt.error)
-        prompts[prompt.unit_id] = prompt
-        if on_prompt is not None:
-            on_prompt(unit, prompt)
+    from .slots import MAKE
 
-    def job(unit: Mapping[str, Any]) -> Prompt | None:
+    lock = threading.Lock()
+
+    def finish(unit: Mapping[str, Any], prompt: Prompt, append: bool) -> None:
+        with lock:
+            if append:
+                _append(root, prompt)
+            if prompt.void:
+                log.warning("unit %s has no prompt: %s", prompt.unit_id, prompt.error)
+            result.put(prompt)
+            if on_prompt is not None:
+                on_prompt(unit, prompt)
+
+    def aborted() -> bool:
+        return abort is not None and abort.is_set()
+
+    def job(unit: Mapping[str, Any]) -> None:
+        try:
+            make(unit)
+        except BaseException:
+            if abort is not None:
+                abort.set()
+            result.finish(failed=True)
+            raise
+
+    def make(unit: Mapping[str, Any]) -> None:
         unit_id = str(unit["unit_id"])
-        if stop is not None and stop():
-            return None
-        if deadline is not None and time.monotonic() >= deadline:
-            return Prompt(
-                unit_id=unit_id,
-                void=True,
-                error="materialize: the duel ran out of its wall-clock budget",
-            )
-        left = budget if deadline is None else min(budget, deadline - time.monotonic())
-        return materialize_unit(
-            benchmark,
-            unit,
-            root / unit_id,
-            env=env,
-            timeout_s=left,
-            stall_s=stall_s,
-            stall_retries=stall_retries,
-        )
+        with slots.take(MAKE) as slot:
+            if aborted() or (stop is not None and stop()):
+                return
+            if deadline is not None and time.monotonic() >= deadline:
+                prompt = Prompt(
+                    unit_id=unit_id,
+                    void=True,
+                    error="materialize: the duel ran out of its wall-clock budget",
+                )
+            else:
+                left = budget if deadline is None else min(budget, deadline - time.monotonic())
+                prompt = materialize_unit(
+                    benchmark,
+                    unit,
+                    root / unit_id,
+                    env={**env, **slot.env},
+                    timeout_s=left,
+                    stall_s=stall_s,
+                    stall_retries=stall_retries,
+                )
+        if not aborted():
+            finish(unit, prompt, append=True)
 
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="materialize") as pool:
-        futures = {}
+    with ThreadPoolExecutor(max_workers=len(slots), thread_name_prefix="materialize") as pool:
+        futures = []
         for unit in units:
             unit_id = str(unit["unit_id"])
             prompt = done.get(unit_id)
@@ -297,17 +408,13 @@ def _materialize_pooled(
                 reason = prompt.changed()
                 if reason is not None:
                     prompt = Prompt(unit_id=unit_id, void=True, error=f"materialize: {reason}")
-                    _append(root, prompt)
-                finish(unit, prompt)
+                    finish(unit, prompt, append=True)
+                else:
+                    finish(unit, prompt, append=False)
                 continue
-            futures[pool.submit(job, unit)] = unit
-        for future in as_completed(futures):
-            prompt = future.result()
-            if prompt is None:
-                continue
-            _append(root, prompt)
-            finish(futures[future], prompt)
-    return Materialized(root=root, prompts=prompts)
+            futures.append(pool.submit(job, unit))
+        for future in futures:
+            future.result()
 
 
 def materialize_unit(

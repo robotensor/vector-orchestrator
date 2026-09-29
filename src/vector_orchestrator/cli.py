@@ -279,7 +279,14 @@ def build_parser() -> argparse.ArgumentParser:
     du.add_argument(
         "--runs-per-task", type=int, default=None, help="units per task (default: the spec's)"
     )
-    du.add_argument("--workers", type=int, default=1, help="units run at once (default 1)")
+    du.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="units run at once on each GPU (CUDA_VISIBLE_DEVICES, else every card nvidia-smi "
+        "lists), each a simulator and a policy server: as many as one card's memory holds "
+        "(default 1)",
+    )
     du.add_argument(
         "--policy-python", default=os.environ.get("VECTOR_POLICY_PYTHON") or sys.executable
     )
