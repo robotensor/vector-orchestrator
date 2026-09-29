@@ -44,7 +44,9 @@ def test_the_vector_contract_is_a_valid_weights_track(vector_spec):
     assert vector_spec.paired_alpha("vector_level1") == 0.05
     # 10 units per task on the 16-task suite, the launch size.
     assert vector_spec.units_per_side("vector_level1") == 160
-    assert vector_spec.baseline("vector_level1")["size"] == "smoke"
+    assert vector_spec.model["architecture"] == "vector_v1.1"
+    # No genesis king: the queue's first entry takes the empty throne.
+    assert vector_spec.baseline("vector_level1") is None
 
 
 def test_a_code_spec_still_needs_its_sandbox_and_has_no_model(spec):
@@ -69,7 +71,9 @@ def test_a_code_spec_still_needs_its_sandbox_and_has_no_model(spec):
         (lambda d: d["duel"]["crown"].update(alpha=1.5), "duel.crown.alpha"),
         (lambda d: d["duel"]["crown"].update(paired_test="t"), "duel.crown.paired_test"),
         (
-            lambda d: d["baselines"]["vector_level1"].update(size="huge"),
+            lambda d: d["baselines"].update(
+                vector_level1={"repo": "robotensor/vector-base", "revision": "0" * 40, "size": "huge"}
+            ),
             "baselines.vector_level1.size",
         ),
     ],
