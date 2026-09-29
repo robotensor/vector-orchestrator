@@ -20,9 +20,9 @@ def test_a_well_formed_file_parses():
     data = safetensors_bytes(metadata={"format": "pt"})
     header = parse(data)
     assert set(header.tensors) == set(TENSORS)
-    assert header.tensors["model.weight"].shape == (4, 3)
-    assert header.tensors["model.weight"].dtype == "F32"
-    assert header.tensors["_dummy_variable"].numel == 0
+    assert header.tensors["unet.weight"].shape == (4, 3)
+    assert header.tensors["unet.weight"].dtype == "F32"
+    assert header.tensors["empty"].numel == 0
     assert header.metadata == {"format": "pt"}
     assert header.param_count == 12 + 4 + 20
     assert header.total_bytes == len(data)

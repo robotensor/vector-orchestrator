@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "robotensor-vector-runtime"
+version = "0.3.0"
+description = "The validator's runtime for vector_v1.1 weights: check, load and serve a submission."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# `vector-runtime check` runs on the validator host, which has no torch: the standard library only.
+dependencies = []
+
+[project.optional-dependencies]
+model = [
+  "numpy>=1.23,<2",
+  "torch==2.8.0",
+  "torchvision==0.23.0",
+  "timm==1.0.20",
+  "diffusers==0.35.1",
+  "safetensors==0.6.2",
+  "opencv-python-headless==4.11.0.86",
+  "scipy==1.15.3",
+]
+dev = ["pytest>=8"]
+
+[project.scripts]
+vector-runtime = "vector_runtime.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vector_runtime"]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+src = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+# importlib mode puts no test directory on sys.path; the tests share helpers from one module.
+pythonpath = ["tests"]
+markers = [
+]

@@ -1,27 +1,17 @@
-"""Is this `model.safetensors` exactly the pinned architecture's tensors? Decided from the header.
+"""Is this `model.safetensors` exactly the architecture's tensors? Decided from the header.
 
-    vector-runtime check --weights DIR_OR_FILE [--template DIR] [--max-bytes N] [--no-hash]
+    vector-runtime check --weights DIR_OR_FILE [--max-bytes N] [--no-hash]
 
-The standard library only: no torch, no safetensors, no numpy. Nothing in the file is executed or
-deserialized beyond its JSON header, which `vector_runtime.header` parses by hand and strictly. The
-file passes when
-
-- it is a regular file of at most `max_file_bytes` (8 GiB by default), with a sane header;
-- its header is well formed and its tensors tile the data section exactly;
-- it holds exactly the template's tensor keys, each with the template's shape and dtype.
-
-Normalizer statistics are loaded dynamically by the network, so a strict `load_state_dict` would
-not notice one missing or added: that is why the key set is checked here, exactly, and why the
-loader (`vector_runtime.model`) also refuses non-finite or zero-scale statistics, which a header
-cannot show.
-
-The report carries `weights_sha256`, the sha256 of the file's bytes: the identity a result is
-recorded under.
+The standard library only: nothing in the file is read beyond its JSON header. It passes when it
+is a regular file of at most `max_file_bytes` whose tensors tile the data section exactly and are
+exactly the architecture's (`<architecture>.json`: every key, shape and dtype). The report carries
+`weights_sha256`, the identity a result is recorded under.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import stat
 from dataclasses import asdict, dataclass, field
@@ -31,7 +21,7 @@ from typing import Any
 from . import ARCHITECTURE, WEIGHTS_FILENAME
 from .header import DEFAULT_MAX_HEADER_BYTES, HeaderError, read_header
 
-#: The largest file checked unless the caller says otherwise. The real one is ~2.2 GB.
+#: The largest file checked unless the caller says otherwise. A real one is ~3.1 GB.
 DEFAULT_MAX_FILE_BYTES = 8 * 1024**3
 #: How many missing, unexpected or mismatched tensors an error lists by name.
 LISTED = 20
@@ -69,7 +59,6 @@ def weights_file(path: str | os.PathLike[str]) -> Path:
 def check(
     weights: str | os.PathLike[str],
     *,
-    template: str | os.PathLike[str] | None = None,
     architecture: str = ARCHITECTURE,
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
     max_header_bytes: int = DEFAULT_MAX_HEADER_BYTES,
@@ -86,11 +75,7 @@ def check(
             report.warnings.append(
                 f"the directory holds more than {WEIGHTS_FILENAME}: {', '.join(report.other_files)}"
             )
-    try:
-        expected = load_tensors(template, architecture)
-    except TemplateError as exc:
-        report.errors.append(str(exc))
-        return report
+    expected = tensors(architecture)
 
     try:
         info = path.stat()  # follows a symbolic link, as a Hugging Face snapshot holds them
@@ -132,8 +117,17 @@ def check(
 check_weights = check
 
 
+def manifest(architecture: str = ARCHITECTURE) -> Path:
+    return Path(__file__).resolve().parent / f"{architecture}.json"
+
+
+def tensors(architecture: str = ARCHITECTURE) -> dict[str, dict[str, Any]]:
+    """`{key: {"shape": [...], "dtype": "F32"}}`: every tensor the architecture's file holds."""
+    return json.loads(manifest(architecture).read_text(encoding="utf-8"))
+
+
 def compare(tensors: dict[str, Any], expected: dict[str, dict[str, Any]]) -> list[str]:
-    """Every way the header's tensors differ from the template's, as error messages."""
+    """Every way the header's tensors differ from the architecture's, as error messages."""
     errors: list[str] = []
     missing = sorted(set(expected) - set(tensors))
     unexpected = sorted(set(tensors) - set(expected))

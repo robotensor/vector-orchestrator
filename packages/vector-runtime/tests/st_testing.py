@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import json
 import struct
-from pathlib import Path
 from typing import Any
 
-from vector_runtime import ARCHITECTURE
 from vector_runtime.header import DTYPE_SIZES
 
-#: A small architecture: a weight, a bias, a zero-size dummy and a normalizer statistic.
+#: A small architecture: a weight, a bias, a zero-size tensor and a normalizer scale.
 TENSORS = {
-    "_dummy_variable": ("F32", [0]),
-    "model.weight": ("F32", [4, 3]),
-    "model.bias": ("F32", [4]),
-    "normalizer.params_dict.action.scale": ("F32", [20]),
+    "empty": ("F32", [0]),
+    "unet.weight": ("F32", [4, 3]),
+    "unet.bias": ("F32", [4]),
+    "norm.action.scale": ("F32", [20]),
 }
 
 
@@ -51,12 +49,7 @@ def safetensors_bytes(
     return prefix + raw + bytes(offset) + extra
 
 
-def write_template(
-    directory: Path, tensors: dict[str, tuple[str, list[int]]] | None = None
-) -> Path:
-    """A template directory whose tensor manifest is `tensors`."""
+def manifest(tensors: dict[str, tuple[str, list[int]]] | None = None) -> dict[str, dict[str, Any]]:
+    """`tensors` as the architecture's manifest holds them."""
     tensors = TENSORS if tensors is None else tensors
-    directory.mkdir(parents=True, exist_ok=True)
-    manifest = {name: {"shape": shape, "dtype": dtype} for name, (dtype, shape) in tensors.items()}
-    (directory / f"{ARCHITECTURE}.tensors.json").write_text(json.dumps(manifest))
-    return directory
+    return {name: {"shape": shape, "dtype": dtype} for name, (dtype, shape) in tensors.items()}
