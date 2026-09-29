@@ -63,7 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from ..canon import sha256_file
-from ..runner import Outcome, benchmark_environment, run_unit, voided
+from ..runner import Outcome, benchmark_environment, out_of_memory, run_unit, voided
 from .materialize import Materialized
 from .orphans import Ledger, move_aside, reap_ledger
 from .runtime import (
@@ -492,9 +492,14 @@ def _play(
     """`_play_once`, started again - a fresh benchmark, and a fresh policy server unless a kept
     one is still serving - when the benchmark stalled (a hung simulator: nobody's doing), at most
     `stall_retries` times and within the same `deadline`. The wall time recorded is all of it.
-    `env` is the slot's (its card) and `pool` its kept policy server."""
+    `env` is the slot's (its card) and `pool` its kept policy server.
+
+    A unit that ran out of GPU memory - the simulator, or the policy under it - is played once
+    more, on a fresh server; out of memory again, it is void on the harness, never a side's loss:
+    the card was shared, or too small for the units put on it."""
     started = time.monotonic()
     attempt = 0
+    retried_memory = False
     while True:
         outcome = _play_once(
             runtime,
@@ -512,6 +517,21 @@ def _play(
             env=env,
             pool=pool,
         )
+        if outcome.success is not True and out_of_memory(
+            outcome.error, outcome.extra.get("detail")
+        ):
+            if not retried_memory and time.monotonic() < deadline:
+                retried_memory = True
+                if pool is not None:
+                    pool.close()  # its memory goes with it
+                log.warning(
+                    "%s %s ran out of GPU memory; playing it again", side, unit.get("unit_id")
+                )
+                continue
+            why = outcome.error or outcome.extra.get("detail")
+            outcome = voided(f"the GPU ran out of memory twice: {why}")
+            outcome.extra["void_cause"] = "harness"
+            return replace(outcome, wall_s=round(time.monotonic() - started, 3))
         stalled = outcome.void and bool(outcome.extra.get("stalled"))
         if not stalled or attempt >= stall_retries or time.monotonic() >= deadline:
             return replace(outcome, wall_s=round(time.monotonic() - started, 3))

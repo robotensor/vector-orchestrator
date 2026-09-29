@@ -49,6 +49,7 @@ from ..robotwin import DEMONSTRATION_CLIP, PROMPT_FILE, RESULT_FILE
 from ..runner import (
     benchmark_environment,
     in_workdir,
+    out_of_memory,
     outcome_from,
     run_argv,
     workdir_of,
@@ -417,6 +418,19 @@ def _materialize_pooled(
             future.result()
 
 
+def _ran_out_of_memory(out_dir: Path, done: Any) -> bool:
+    """Whether a materialize command failed because the GPU ran out of memory: said in its log's
+    end or its result's error."""
+    error = None
+    try:
+        doc = json.loads((out_dir / RESULT_FILE).read_text(encoding="utf-8"))
+        error = doc.get("error") if isinstance(doc, dict) and doc.get("ok") is not True else None
+    except (OSError, ValueError):
+        pass
+    failed = done.returncode not in (0, None) or error is not None
+    return failed and out_of_memory(done.log_tail, error)
+
+
 def materialize_unit(
     benchmark: Any,
     unit: Mapping[str, Any],
@@ -428,8 +442,8 @@ def materialize_unit(
     stall_retries: int = 0,
 ) -> Prompt:
     """One unit's prompt, produced and verified. Every failure is a void prompt, never a raise.
-    A run that stalls (`run_argv`'s watchdog) is started again, `stall_retries` times, within the
-    same `timeout_s`."""
+    A run that stalls (`run_argv`'s watchdog) is started again, `stall_retries` times, and one that
+    ran out of GPU memory once, within the same `timeout_s`."""
     unit_id = str(unit["unit_id"])
     name = str(getattr(benchmark, "id", "benchmark"))
     started = time.monotonic()
@@ -457,6 +471,7 @@ def materialize_unit(
             return void(f"could not clear a stale {stale}: {exc}")
 
     attempt = 0
+    retried_memory = False
     while True:
         left = timeout_s - (time.monotonic() - started)
         done = run_argv(
@@ -468,6 +483,17 @@ def materialize_unit(
             stall_s=stall_s,
             cwd=workdir_of(benchmark),
         )
+        if (
+            not retried_memory
+            and not done.stalled
+            and _ran_out_of_memory(out_dir, done)
+            and time.monotonic() - started < timeout_s
+        ):
+            retried_memory = True
+            log.warning("materializing %s ran out of GPU memory; starting it again", unit_id)
+            for stale in (PROMPT_FILE, DEMONSTRATION_CLIP, RESULT_FILE):
+                (out_dir / stale).unlink(missing_ok=True)
+            continue
         if not done.stalled or attempt >= stall_retries:
             break
         attempt += 1

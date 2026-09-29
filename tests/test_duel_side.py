@@ -140,6 +140,26 @@ def test_a_void_the_benchmark_reports_is_the_sides_failure_only_for_the_policys_
     assert record["error"]
 
 
+@pytest.mark.parametrize(
+    "behaviour, outcome, played",
+    [
+        ("oom_once", (True, False), 2),  # the simulator ran out; the second play is scored
+        ("policy_oom_once", (True, False), 2),  # the policy under it did; never the side's loss
+        ("oom_always", (None, True), 2),  # twice: void on the harness, not a failure
+    ],
+)
+def test_a_unit_that_ran_out_of_gpu_memory_is_played_once_more(
+    duel_spec, fake, units, prompts, tmp_path, behaviour, outcome, played
+):
+    units[0]["fake_behaviour"] = behaviour
+    results = side(duel_spec, fake, units, prompts, tmp_path, FakePolicyRuntime(duel_spec))
+    record = results[units[0]["unit_id"]]
+    assert (record["success"], record["void"]) == outcome, record["error"]
+    assert runs(tmp_path, units[0]["unit_id"]) == played
+    if record["void"]:
+        assert record["error"].startswith("the GPU ran out of memory twice")
+
+
 def test_a_policy_that_never_listens_fails_and_a_runtime_that_cannot_serve_voids(
     duel_spec, fake, units, prompts, tmp_path
 ):

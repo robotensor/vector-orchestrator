@@ -483,7 +483,9 @@ class Orchestrator:
         try:
             with ThreadPoolExecutor(max_workers=3, thread_name_prefix="duel") as phases:
                 jobs = [phases.submit(self._materialize, duel, slots, abort)]
-                jobs += [phases.submit(self._evaluate, duel, side, slots, abort) for side, _ in sides]
+                jobs += [
+                    phases.submit(self._evaluate, duel, side, slots, abort) for side, _ in sides
+                ]
                 try:
                     wait(jobs, return_when=FIRST_EXCEPTION)
                     for job in jobs:
@@ -894,7 +896,9 @@ class _VoidOn(Mapping[str, str]):
     def _void(self) -> dict[str, str]:
         with self._orchestrator._lock:
             return {
-                str(row["unit_id"]): f"void on the {self._side}'s side: {row.get(f'{self._side}_error')}"
+                str(
+                    row["unit_id"]
+                ): f"void on the {self._side}'s side: {row.get(f'{self._side}_error')}"
                 for row in self._duel.units
                 if row["void"] and row.get(f"{self._side}_error") is not None
             }

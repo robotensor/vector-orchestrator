@@ -80,6 +80,15 @@ def materialize(args: argparse.Namespace) -> int:
     out.mkdir(parents=True, exist_ok=True)
     record_given(out, args)
     behaviour = args.behaviour
+    with open(out / "makes.log", "a") as fh:
+        fh.write(f"{os.getpid()}\n")
+    first = len((out / "makes.log").read_text().splitlines()) == 1
+    if behaviour == "oom_once" and first:
+        print(
+            "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB",
+            file=sys.stderr,
+        )
+        return 3
     if behaviour == "crash":
         print("the expert lost the GPU", file=sys.stderr)
         return 3
@@ -131,7 +140,25 @@ def run(args: argparse.Namespace) -> int:
         (out / "result.json").write_text("{not json")
         return 0
     prompt_sha256 = vector_fake_simulator.digest(Path(args.prompt))
-    if behaviour == "policy":
+    first = len((out / "runs.log").read_text().splitlines()) == 1
+    if behaviour in ("oom_once", "oom_always") and (first or behaviour == "oom_always"):
+        result = {
+            "success": None,
+            "void": True,
+            "steps": None,
+            "error": "simulator failed: the GPU ran out of memory during the rollout: "
+            "CUDA out of memory",
+        }
+    elif behaviour == "policy_oom_once" and first:
+        drive_policy(args)
+        result = {
+            "success": False,
+            "void": False,
+            "steps": 2,
+            "error": None,
+            "detail": "policy broke the protocol: OutOfMemoryError: act: CUDA out of memory",
+        }
+    elif behaviour in ("policy", "oom_once", "policy_oom_once"):
         result = drive_policy(args)
     elif behaviour == "policy_then_void":
         drive_policy(args)

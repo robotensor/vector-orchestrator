@@ -107,6 +107,16 @@ def test_a_unit_whose_prompt_fails_is_void_with_the_reason_and_the_rest_go_on(
     assert out.void == 1
 
 
+def test_a_materialization_that_ran_out_of_gpu_memory_is_made_once_more(
+    fake_spec, fake, units, tmp_path
+):
+    units[1]["fake_materialize"] = "oom_once"
+    out = materialize_units(fake_spec, units, tmp_path, benchmark=fake)
+    assert out.void == 0 and out.prompts[units[1]["unit_id"]].sha256
+    made = (tmp_path / units[1]["unit_id"] / "makes.log").read_text().splitlines()
+    assert len(made) == 2
+
+
 def test_a_materialization_past_its_budget_is_void(fake_spec, fake, units, tmp_path):
     units[0]["fake_materialize"] = "hang"
     out = materialize_units(fake_spec, units[:1], tmp_path, benchmark=fake, timeout_s=1.0)

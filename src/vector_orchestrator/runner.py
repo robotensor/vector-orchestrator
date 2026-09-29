@@ -137,6 +137,16 @@ def outcome_from(result: Mapping[str, Any], *, wall_s: float = 0.0) -> Outcome:
     )
 
 
+#: What says the GPU ran out of memory, in a benchmark's log, error or detail: on a card shared by
+#: several units that is nobody's doing, so the unit is run once more before it counts.
+OUT_OF_MEMORY = ("out of memory", "outofmemoryerror")
+
+
+def out_of_memory(*texts: Any) -> bool:
+    joined = " ".join(str(text) for text in texts if text).lower()
+    return any(mark in joined for mark in OUT_OF_MEMORY)
+
+
 def voided(reason: str, *, wall_s: float = 0.0) -> Outcome:
     return Outcome(success=None, void=True, steps=None, error=reason, wall_s=wall_s)
 
