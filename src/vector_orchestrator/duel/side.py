@@ -521,7 +521,9 @@ def _play_once(
                 copied = (
                     nullcontext(None)
                     if served.live_log is None
-                    else mirror_log(served.live_log, unit_dir / POLICY_LOG_COPY)
+                    else mirror_log(
+                        served.live_log, unit_dir / POLICY_LOG_COPY, start=served.log_start
+                    )
                 )
                 with copied as policy_log:
                     timeout_s = max(0.0, deadline - time.monotonic())

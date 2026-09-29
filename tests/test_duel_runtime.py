@@ -14,6 +14,7 @@ from vector_orchestrator.duel.runtime import (
     POLICY,
     PolicyDied,
     RuntimeUnavailable,
+    ServerPool,
     SubmissionRefused,
     SubprocessPolicyRuntime,
     mirror_log,
@@ -159,3 +160,67 @@ def test_a_server_that_never_listens_is_a_dead_policy(runtime, tmp_path):
         with runtime.serve(prepared, workdir=tmp_path / "u"):
             pass
     assert time.monotonic() - started < 10
+
+
+def _prepared(runtime, repo, sha, tmp_path):
+    return runtime.prepare(
+        runtime.fetch(runtime.resolve(repo, sha), workdir=tmp_path), workdir=tmp_path / repo
+    )
+
+
+def _hello(served):
+    from vector_protocol.client import RemotePolicy
+
+    key = bytes.fromhex(served.env[served.authkey_env])
+    with RemotePolicy(served.address, key, timeout_s=10) as policy:
+        return policy.hello()
+
+
+def test_a_pool_keeps_one_server_for_a_submissions_units_and_starts_another_for_another(
+    runtime, tmp_path
+):
+    zero = _prepared(runtime, "org/zero", "d" * 40, tmp_path)
+    replay = _prepared(runtime, "org/replay", "a" * 40, tmp_path)
+    pool = ServerPool(tmp_path / "slot")
+    pids = []
+    for unit, prepared in (("u0", zero), ("u1", zero), ("u2", replay)):
+        with runtime.serve(prepared, workdir=tmp_path / unit, pool=pool) as served:
+            _hello(served)
+            assert served.died() is None
+            pids.append(served.pgid)
+        assert pool.current is not None and pool.current.alive(), "the server outlived its unit"
+    assert pids[0] == pids[1] != pids[2]
+    first, second = ((tmp_path / u / "policy.log").read_text() for u in ("u0", "u1"))
+    assert "listening on" in first and "listening on" not in second, "a unit got another's log"
+    assert "hello from" in second
+    kept = pool.current
+    pool.close()
+    assert not kept.alive() and pool.current is None
+    assert not kept.sockets.exists()
+
+
+def test_a_kept_server_that_died_is_started_again_for_the_next_unit(runtime, tmp_path):
+    zero = _prepared(runtime, "org/zero", "d" * 40, tmp_path)
+    pool = ServerPool(tmp_path / "slot")
+    with runtime.serve(zero, workdir=tmp_path / "u0", pool=pool) as served:
+        first = served.pgid
+        os.killpg(first, 9)
+        assert eventually(lambda: served.died() is not None)
+        assert served.died().cause == POLICY
+    assert pool.current is None
+    with runtime.serve(zero, workdir=tmp_path / "u1", pool=pool) as served:
+        assert served.pgid != first
+        _hello(served)
+    pool.close()
+
+
+def test_a_server_is_put_on_the_card_it_is_given(runtime, tmp_path):
+    zero = _prepared(runtime, "org/zero", "d" * 40, tmp_path)
+    pool = ServerPool(tmp_path / "slot")
+    for card in ("3", "5"):
+        with runtime.serve(
+            zero, workdir=tmp_path / card, env={"CUDA_VISIBLE_DEVICES": card}, pool=pool
+        ) as served:
+            environ = Path(f"/proc/{served.pgid}/environ").read_bytes().split(b"\0")
+            assert f"CUDA_VISIBLE_DEVICES={card}".encode() in environ
+    pool.close()

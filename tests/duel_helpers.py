@@ -63,7 +63,7 @@ class FakePolicyRuntime(SubprocessPolicyRuntime):
         self._number = None
         return super().prepare(fetched, workdir=workdir)
 
-    def serve(self, prepared, *, workdir):
+    def serve(self, prepared, *, workdir, **kw):
         number = len(self.serves)
         if number == self.crash_on_serve:
             self.crash_on_serve = None
@@ -71,7 +71,7 @@ class FakePolicyRuntime(SubprocessPolicyRuntime):
         self.serves.append((prepared.ref.repo, Path(workdir).name))
         self._current = prepared.ref.repo
         self._number = number
-        return super().serve(prepared, workdir=workdir)
+        return super().serve(prepared, workdir=workdir, **kw)
 
     def _started(self, process, served):
         if self._number is None:

@@ -413,11 +413,11 @@ def test_a_duel_is_not_published_against_a_king_crowned_away_while_it_ran(
     crowned(store, duel_spec, ZERO_REF)
 
     class Usurped(FakePolicyRuntime):
-        def serve(self, prepared, *, workdir):
+        def serve(self, prepared, *, workdir, **kw):
             if len(self.serves) == 5:  # the king's last unit: another writer crowns BOMB
                 record = make_record("duel", 3, ZERO_REF, BOMB_REF, dethroned=True)
                 publish(store, duel_spec, record)
-            return super().serve(prepared, workdir=workdir)
+            return super().serve(prepared, workdir=workdir, **kw)
 
     live = RecordingReporter(duel_spec)
     req = DuelRequest(REPLAY_REF, ZERO_REF, block=2)

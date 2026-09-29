@@ -144,13 +144,13 @@ def test_a_policy_that_never_listens_fails_and_a_runtime_that_cannot_serve_voids
     duel_spec, fake, units, prompts, tmp_path
 ):
     class Flaky(FakePolicyRuntime):
-        def serve(self, prepared, *, workdir):
+        def serve(self, prepared, *, workdir, **kw):
             unit = Path(workdir).name
             if unit == units[0]["unit_id"]:
                 raise PolicyDied("the policy did not listen within 600s")
             if unit == units[1]["unit_id"]:
                 raise RuntimeUnavailable("the policy server could not be started")
-            return super().serve(prepared, workdir=workdir)
+            return super().serve(prepared, workdir=workdir, **kw)
 
     results = side(duel_spec, fake, units, prompts, tmp_path, Flaky(duel_spec))
     never, unserved, fine = (results[u["unit_id"]] for u in units)
@@ -321,9 +321,9 @@ def test_starting_the_policy_is_taken_from_its_units_budget_and_counted_in_its_w
     monkeypatch.setattr(side_module, "run_unit", spying)
 
     class SlowStart(FakePolicyRuntime):
-        def serve(self, prepared, *, workdir):
+        def serve(self, prepared, *, workdir, **kw):
             time.sleep(2.0)  # a policy loading its weights before it listens
-            return super().serve(prepared, workdir=workdir)
+            return super().serve(prepared, workdir=workdir, **kw)
 
     results = side(duel_spec, fake, units[:1], prompts, tmp_path, SlowStart(duel_spec))
     budget = float(duel_spec.budgets["unit"])
@@ -437,9 +437,9 @@ def test_a_policy_that_takes_its_whole_budget_to_start_fails_its_unit_unplayed(
     tiny = write_spec(doc, name="tiny-budget-spec.json")
 
     class SlowStart(FakePolicyRuntime):
-        def serve(self, prepared, *, workdir):
+        def serve(self, prepared, *, workdir, **kw):
             time.sleep(1.5)  # loading weights before it listens
-            return super().serve(prepared, workdir=workdir)
+            return super().serve(prepared, workdir=workdir, **kw)
 
     results = side(tiny, fake, units[:1], prompts, tmp_path, SlowStart(tiny))
     record = results[units[0]["unit_id"]]

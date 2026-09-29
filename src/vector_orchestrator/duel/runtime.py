@@ -1,10 +1,13 @@
-"""Serving a side's policy: one fresh `python -m vector_protocol.serve` per unit, on this host.
+"""Serving a side's policy: `python -m vector_protocol.serve` on this host.
 
 A duel asks a runtime, in order: `resolve(repo, revision)` for the commit that will run; `fetch`
 then `prepare` once per side (the `fetching` and `checking` phases); and `serve(prepared)`, a
-context manager serving the policy for one unit. The server accepts one client and exits, so
-nothing a policy remembers leaks from one unit into the next, and a policy that died on one unit
-is simply served again.
+context manager serving the policy for one unit. Alone, each `serve` is a fresh server that
+accepts one client and exits. Given a `ServerPool`, a server is kept between units
+(`vector_protocol.serve --keep`): the next unit of the same submission is served by the same
+process, with its model already built, and `reset` and `prompt` start its episode; a unit of
+another submission, or a server that died, gets a fresh one. `env` puts the server on a card
+(`CUDA_VISIBLE_DEVICES`).
 
 Whose a failure is decides what it costs. A submission that cannot run raises `SubmissionRefused`
 (a published reason); a policy that never listens within `budgets.policy_start` raises
@@ -155,10 +158,10 @@ def tree_hash(directory: Path) -> str:
     return digest.hexdigest()
 
 
-def copy_log(source: Path, target: Path, limit: int) -> None:
-    """Append at most `limit` bytes of a policy's log to `target`. The policy can write where its
-    log is, so it may have made it a link or a pipe: only a regular file is read, and nothing is
-    followed or waited on."""
+def copy_log(source: Path, target: Path, limit: int, start: int = 0) -> None:
+    """Append at most `limit` bytes of a policy's log, from byte `start`, to `target`. The policy
+    can write where its log is, so it may have made it a link or a pipe: only a regular file is
+    read, and nothing is followed or waited on."""
     try:
         fd = os.open(source, _LOG_FLAGS)
     except OSError:
@@ -167,6 +170,7 @@ def copy_log(source: Path, target: Path, limit: int) -> None:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             return
         with open(fd, "rb", closefd=False) as fh, open(target, "ab") as out:
+            fh.seek(start)
             out.write(fh.read(limit))
     except OSError:
         pass
@@ -174,10 +178,10 @@ def copy_log(source: Path, target: Path, limit: int) -> None:
         os.close(fd)
 
 
-def _copy_tail(source: Path, target: Path, limit: int, seen: Any) -> Any:
-    """Replace `target` with the last `limit` bytes of the log at `source`, unless the log is as it
-    was when `seen` was returned; what to pass as `seen` next time. A log that is not a regular
-    file, or cannot be read, leaves `target` as it was."""
+def _copy_tail(source: Path, target: Path, limit: int, seen: Any, start: int = 0) -> Any:
+    """Replace `target` with the last `limit` bytes of the log at `source` from byte `start` on,
+    unless the log is as it was when `seen` was returned; what to pass as `seen` next time. A log
+    that is not a regular file, or cannot be read, leaves `target` as it was."""
     try:
         fd = os.open(source, _LOG_FLAGS)
     except OSError:
@@ -188,7 +192,7 @@ def _copy_tail(source: Path, target: Path, limit: int, seen: Any) -> Any:
         if not stat.S_ISREG(info.st_mode) or state == seen:
             return seen
         with open(fd, "rb", closefd=False) as fh:
-            fh.seek(max(0, info.st_size - limit))
+            fh.seek(max(start, info.st_size - limit))
             data = fh.read(limit)
         partial = target.with_name(f".{target.name}.partial")
         partial.write_bytes(data)
@@ -207,6 +211,7 @@ def mirror_log(
     *,
     limit: int = LOG_TAIL_BYTES,
     interval_s: float = LOG_MIRROR_S,
+    start: int = 0,
 ) -> Iterator[Path]:
     """`target`, holding the end of the policy's log at `source` for as long as the block runs.
 
@@ -215,16 +220,17 @@ def mirror_log(
     something on the benchmark's side, or a pipe that blocks whoever opens it. `target` is a file
     in a directory the policy never sees, replaced whole with the last `limit` bytes of the log
     whenever the log changes, read only from a regular file without following a link; it trails
-    the log by up to `interval_s`, catches up once more on the way out, and is removed then."""
+    the log by up to `interval_s`, catches up once more on the way out, and is removed then. A
+    kept server's log holds earlier units too: only what it wrote from byte `start` on is copied."""
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(b"")
-    seen: Any = _copy_tail(source, target, limit, None)
+    seen: Any = _copy_tail(source, target, limit, None, start)
     stop = threading.Event()
 
     def follow() -> None:
         nonlocal seen
         while not stop.wait(interval_s):
-            seen = _copy_tail(source, target, limit, seen)
+            seen = _copy_tail(source, target, limit, seen, start)
 
     thread = threading.Thread(target=follow, name="vector-policy-log", daemon=True)
     thread.start()
@@ -262,6 +268,55 @@ class ServedPolicy:
     #: the stall watchdog (a benchmark waiting on a policy that is building its model is not
     #: hung); None where the runtime cannot say.
     pgid: int | None = None
+    #: Where this unit's part of `live_log` starts: a kept server's log holds earlier units too.
+    log_start: int = 0
+
+
+@dataclass
+class _Server:
+    """One `vector_protocol.serve` process, listening."""
+
+    process: subprocess.Popen
+    sockets: Path
+    address: Path
+    log_file: Path
+    key: bytes
+    ledger: Ledger
+    #: What it serves, and on what: a kept server is reused only for the same of both.
+    handle: str
+    env: tuple[tuple[str, str], ...]
+
+    def alive(self) -> bool:
+        return self.process.poll() is None
+
+    def stop(self, log_to: Path | None = None) -> None:
+        """Kill its group, then copy its log to `log_to` (when given) before its directory goes."""
+        _kill_group(self.process)
+        self.ledger.ended(self.process.pid)
+        if log_to is not None:
+            copy_log(self.log_file, log_to, MAX_LOG_BYTES)
+        shutil.rmtree(self.sockets, ignore_errors=True)
+
+
+class ServerPool:
+    """A policy server kept between units, one at a time: a slot's (`serve(pool=...)`).
+
+    `ledger_dir` is where the kept server's process group is recorded while it runs, for the
+    reaper of a killed orchestrator (`orphans`)."""
+
+    def __init__(self, ledger_dir: Path) -> None:
+        self.ledger_dir = Path(ledger_dir)
+        self.current: _Server | None = None
+
+    @property
+    def handle(self) -> str | None:
+        """What the kept server serves, if one is kept."""
+        return self.current.handle if self.current is not None else None
+
+    def close(self) -> None:
+        if self.current is not None:
+            self.current.stop()
+            self.current = None
 
 
 class SubprocessPolicyRuntime:
@@ -335,28 +390,41 @@ class SubprocessPolicyRuntime:
         )
 
     @contextmanager
-    def serve(self, prepared: PreparedSubmission, *, workdir: Path) -> Iterator[ServedPolicy]:
-        with self._serve(Path(prepared.handle), Path(workdir)) as (served, _, _live):
-            yield served
+    def serve(
+        self,
+        prepared: PreparedSubmission,
+        *,
+        workdir: Path,
+        env: Mapping[str, str] | None = None,
+        pool: ServerPool | None = None,
+    ) -> Iterator[ServedPolicy]:
+        if pool is None:
+            with self._serve(Path(prepared.handle), Path(workdir), env) as (served, _, _live):
+                yield served
+            return
+        yield from self._serve_kept(prepared, Path(workdir), env, pool)
 
     # -- a server ---------------------------------------------------------------------------
 
-    @contextmanager
-    def _serve(self, manifest: Path, workdir: Path) -> Iterator[tuple[ServedPolicy, bytes, Path]]:
-        """One `vector_protocol.serve` process, listening; killed with its group on the way out.
+    def _launch(
+        self, manifest: Path, ledger_dir: Path, env: Mapping[str, str] | None, *, keep: bool
+    ) -> _Server:
+        """One `vector_protocol.serve` process, listening; `PolicyDied` if it never does.
 
-        Its log is written beside its socket, in a temporary directory of its own, and copied into
-        `workdir` when it is over: nothing on the policy's command line names the run directory,
-        which would tell it which side it is on and where the other side's results are."""
-        workdir.mkdir(parents=True, exist_ok=True)
+        Its log is written beside its socket, in a temporary directory of its own: nothing on the
+        policy's command line names the run directory, which would tell it which side it is on
+        and where the other side's results are."""
+        ledger_dir.mkdir(parents=True, exist_ok=True)
         # A Unix socket's path is limited to about 100 bytes, which a run directory can exceed.
         sockets = Path(tempfile.mkdtemp(prefix="vector-duel-"))
         address = sockets / SOCKET_FILE
         log_file = sockets / LOG_FILE
         key = secrets.token_bytes(AUTHKEY_BYTES)
-        env = {
+        extra = dict(env or {})
+        environ = {
             **benchmark_environment(os.environ, AUTHKEY_ENV, self.env_keep),
             **self.env_set,
+            **extra,
             AUTHKEY_ENV: key.hex(),
         }
         argv = [
@@ -371,11 +439,12 @@ class SubprocessPolicyRuntime:
             AUTHKEY_ENV,
             "--log-file",
             str(log_file),
+            *(["--keep"] if keep else []),
         ]
         try:
             process = subprocess.Popen(
                 argv,
-                env=env,
+                env=environ,
                 cwd=sockets,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -385,26 +454,82 @@ class SubprocessPolicyRuntime:
         except OSError as exc:
             shutil.rmtree(sockets, ignore_errors=True)
             raise RuntimeUnavailable(f"the policy server could not be started: {exc}") from None
-        ledger = Ledger(workdir)
+        server = _Server(
+            process=process,
+            sockets=sockets,
+            address=address,
+            log_file=log_file,
+            key=key,
+            ledger=Ledger(ledger_dir),
+            handle=str(manifest),
+            env=tuple(sorted(extra.items())),
+        )
         try:
-            ledger.started(process.pid)
+            server.ledger.started(process.pid)
             self._wait_listening(process, address, log_file)
-            served = ServedPolicy(
-                address=str(address),
-                authkey_env=AUTHKEY_ENV,
-                env={AUTHKEY_ENV: key.hex()},
-                log_file=workdir / LOG_FILE,
-                died=lambda: self._died(process, log_file),
-                live_log=log_file,
-                pgid=process.pid,
+        except BaseException:
+            server.stop()
+            raise
+        return server
+
+    def _served(self, server: _Server, workdir: Path, died: Any, start: int = 0) -> ServedPolicy:
+        return ServedPolicy(
+            address=str(server.address),
+            authkey_env=AUTHKEY_ENV,
+            env={AUTHKEY_ENV: server.key.hex()},
+            log_file=workdir / LOG_FILE,
+            died=died,
+            live_log=server.log_file,
+            pgid=server.process.pid,
+            log_start=start,
+        )
+
+    @contextmanager
+    def _serve(
+        self, manifest: Path, workdir: Path, env: Mapping[str, str] | None = None
+    ) -> Iterator[tuple[ServedPolicy, bytes, Path]]:
+        """A server for one client, killed with its group on the way out; its log is copied into
+        `workdir` when it is over."""
+        workdir.mkdir(parents=True, exist_ok=True)
+        server = self._launch(manifest, workdir, env, keep=False)
+        try:
+            served = self._served(
+                server, workdir, lambda: self._died(server.process, server.log_file)
             )
-            self._started(process, served)
-            yield served, key, log_file
+            self._started(server.process, served)
+            yield served, server.key, server.log_file
         finally:
-            _kill_group(process)
-            ledger.ended(process.pid)
-            copy_log(log_file, workdir / LOG_FILE, MAX_LOG_BYTES)
-            shutil.rmtree(sockets, ignore_errors=True)
+            server.stop(log_to=workdir / LOG_FILE)
+
+    def _serve_kept(
+        self,
+        prepared: PreparedSubmission,
+        workdir: Path,
+        env: Mapping[str, str] | None,
+        pool: ServerPool,
+    ) -> Iterator[ServedPolicy]:
+        """One unit served by the pool's kept server, started - or started again, for another
+        submission or card, or after it died - when it must be. The unit's part of its log is
+        copied into `workdir` when the unit is over."""
+        workdir.mkdir(parents=True, exist_ok=True)
+        wanted = (str(prepared.handle), tuple(sorted(dict(env or {}).items())))
+        kept = pool.current
+        if kept is not None and ((kept.handle, kept.env) != wanted or not kept.alive()):
+            pool.close()
+            kept = None
+        # A server started for this unit gives it its whole log, the model being built included.
+        start = _size(kept.log_file) if kept is not None else 0
+        if kept is None:
+            kept = self._launch(Path(prepared.handle), pool.ledger_dir, env, keep=True)
+            pool.current = kept
+        served = self._served(kept, workdir, lambda: _ended(kept), start)
+        self._started(kept.process, served)
+        try:
+            yield served
+        finally:
+            copy_log(kept.log_file, workdir / LOG_FILE, MAX_LOG_BYTES, start=start)
+            if not kept.alive():
+                pool.close()
 
     def _wait_listening(self, process: subprocess.Popen, address: Path, log_file: Path) -> None:
         deadline = time.monotonic() + self.start_timeout_s
@@ -438,6 +563,23 @@ class SubprocessPolicyRuntime:
             return None
         how = f"was killed by signal {-code}" if code < 0 else f"exited {code}"
         return PolicyEnd(f"the policy process {how}\n{tail(log_file)}".rstrip(), POLICY)
+
+
+def _size(path: Path) -> int:
+    try:
+        return os.stat(path).st_size
+    except OSError:
+        return 0
+
+
+def _ended(server: _Server) -> PolicyEnd | None:
+    """How a kept server ended underneath its unit: a non-zero exit or a signal. Still serving, or
+    gone with its client (a hang-up during a call exits 0), is not the policy's doing."""
+    code = server.process.poll()
+    if code is None or code == 0:
+        return None
+    how = f"was killed by signal {-code}" if code < 0 else f"exited {code}"
+    return PolicyEnd(f"the policy process {how}\n{tail(server.log_file)}".rstrip(), POLICY)
 
 
 def _kill_group(process: subprocess.Popen) -> None:
