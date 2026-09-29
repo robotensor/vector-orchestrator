@@ -6,11 +6,10 @@ import json
 import shutil
 from pathlib import Path
 
-import httpx
 import pytest
 from huggingface_hub.errors import HfHubHTTPError
 
-from submission_helpers import SHA_A, SHA_B, FakeHub, hub_response, write_policy_repo
+from submission_helpers import SHA_A, SHA_B, FakeHub, httpx, hub_response, write_policy_repo
 from vector_orchestrator.duel.weights_runtime import MAX_REPO_BYTES
 from vector_orchestrator.ids import SubmissionRef
 from vector_orchestrator.submissions import SubmissionError, SubmissionRejected

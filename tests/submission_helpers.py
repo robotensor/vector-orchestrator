@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import httpx
+import huggingface_hub
 from huggingface_hub.errors import RepositoryNotFoundError, RevisionNotFoundError
+
+#: The HTTP client huggingface_hub raises its errors with: httpx2 from its version 2, httpx before.
+httpx = importlib.import_module(
+    "httpx2" if int(huggingface_hub.__version__.split(".")[0]) >= 2 else "httpx"
+)
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
 
 
-def hub_response(status: int) -> httpx.Response:
+def hub_response(status: int) -> Any:
     """A response as huggingface_hub's errors need one, with its request attached."""
     request = httpx.Request("GET", "https://huggingface.co/api/models/org/policy")
     return httpx.Response(status, request=request)
