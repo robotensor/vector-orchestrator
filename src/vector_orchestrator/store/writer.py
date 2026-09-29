@@ -1,10 +1,10 @@
-"""The signed, append-only result store.
+"""The append-only result store.
 
-Layout (spec.store; unchanged from the validator the dashboard was built against):
+Layout (spec.store):
   manifest.json
   tracks/{track}/head.json
   tracks/{track}/queue.json
-  tracks/{track}/index-NNNN.jsonl     one '<canonical_json>\\t<signature_hex>' per line
+  tracks/{track}/index-NNNN.jsonl     one '<canonical_json>' per line
   events/{track}/{event_id}.json
   media/{sha[:k]}/{sha}.{ext}
 
@@ -12,9 +12,9 @@ Every write is atomic (tmp + rename) except the index append, which is a single 
 followed by fsync, so a concurrent reader sees at most one torn final line, which the dashboard
 tolerates.
 
-The index is the store's truth. A record's sequence number comes from the last signed line of the
+The index is the store's truth. A record's sequence number comes from the last whole line of the
 index, not from `head.json`, which is a cache the append rewrites: a crash between the two would
-otherwise publish two records under one seq and leave the store failing verify for good.
+otherwise publish two records under one seq.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from ..canon import Signer, canonical_json, sha256_file, verify_signature
+from ..canon import canonical_json, sha256_file
 from ..spec import Spec
 
 #: The event kinds that may move the crown. Everything else is published and rendered but never
@@ -113,10 +113,9 @@ def read_json(path: Path) -> Any | None:
 
 
 class Store:
-    def __init__(self, root: str | Path, spec: Spec, signer: Signer | None = None):
+    def __init__(self, root: str | Path, spec: Spec):
         self.root = Path(root)
         self.spec = spec
-        self.signer = signer
         self.touched: set[str] = set()
         #: The daemon's duel loop and the intake's request threads both write a store, and one
         #: file touched between a drain's copy and its clear would miss the push.
@@ -151,10 +150,9 @@ class Store:
         self._touch(Path(path))
 
     # ---------------------------------------------------------------- manifest
-    def init(self, validator_key: str) -> dict[str, Any]:
+    def init(self) -> dict[str, Any]:
         manifest = {
             "schema": int(self.spec.store["schema"]),
-            "validator_key": validator_key,
             "spec_version": self.spec.version,
             "spec_fingerprint": self.spec.fingerprint,
             "tracks": list(self.spec.tracks),
@@ -216,18 +214,21 @@ class Store:
             part += 1
         return parts
 
-    def _is_signed_line(self, line: bytes) -> bool:
-        key = self.signer.verify_key_hex if self.signer else ""
+    @staticmethod
+    def _is_whole_record(line: bytes) -> bool:
+        """A line is a whole record when it is a JSON object in exactly its canonical form: a
+        record cut anywhere short of its closing brace is not."""
         try:
-            body, tab, sig = line.decode("utf-8").partition("\t")
-        except UnicodeDecodeError:
+            text = line.decode("utf-8")
+            record = json.loads(text)
+            return isinstance(record, dict) and canonical_json(record) == text
+        except (UnicodeDecodeError, ValueError, RecursionError):
             return False
-        return bool(tab) and verify_signature(key, body, sig)
 
     def repair_tail(self, track: str) -> None:
         """Make the newest index part end in a whole line again.
 
-        A crash can leave a partial final line. If what is there is a complete signed record that
+        A crash can leave a partial final line. If what is there is a whole canonical record that
         lost only its newline it is completed; anything else is dropped, because appending after it
         would splice the next record onto half of one.
         """
@@ -239,7 +240,7 @@ class Store:
         if not data or data.endswith(b"\n"):
             return
         kept, _, tail = data.rpartition(b"\n")
-        if self._is_signed_line(tail):
+        if self._is_whole_record(tail):
             log.warning("%s: completing a final line that lost its newline", path)
             with open(path, "ab") as fh:
                 fh.write(b"\n")
@@ -259,7 +260,7 @@ class Store:
                 if not line:
                     continue
                 try:
-                    record = json.loads(line.split(b"\t", 1)[0].decode("utf-8"))
+                    record = json.loads(line.decode("utf-8"))
                 except (UnicodeDecodeError, ValueError):
                     continue
                 if isinstance(record, dict) and isinstance(record.get("seq"), int):
@@ -276,14 +277,12 @@ class Store:
         return (seq - 1) // per
 
     def append(self, track: str, record: dict[str, Any]) -> int:
-        """Assign the next seq, sign, append to the index and advance the head.
+        """Assign the next seq, append to the index and advance the head.
 
-        The event is written first (`write_event`) and its file's sha256 goes into the signed
-        record as `event_sha256`, so the signature covers the event's bytes - unit outcomes,
-        prompt hashes, clip hashes - and not only the fields the index repeats.
+        The event is written first (`write_event`) and its file's sha256 goes into the record as
+        `event_sha256`, so the index line pins the event's bytes - unit outcomes, prompt hashes,
+        clip hashes - and not only the fields the index repeats.
         """
-        if self.signer is None:
-            raise RuntimeError("store has no signer")
         event_path = self.event_path(track, str(record["event_id"]))
         if not event_path.is_file():
             raise RuntimeError(f"write the event before its record: {event_path} does not exist")
@@ -293,8 +292,7 @@ class Store:
             self.repair_tail(track)
             seq = self.next_seq(track)
             record["seq"] = seq
-            canonical = canonical_json(record)
-            line = canonical + "\t" + self.signer.sign(canonical) + "\n"
+            line = canonical_json(record) + "\n"
             path = self.index_part_path(track, self.part_of(seq))
             path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
@@ -349,9 +347,8 @@ class Store:
             for raw in path.read_text(encoding="utf-8").split("\n"):
                 if not raw.strip():
                     continue
-                body = raw.split("\t", 1)[0]
                 try:
-                    out.append(json.loads(body))
+                    out.append(json.loads(raw))
                 except ValueError:
                     continue
             part += 1

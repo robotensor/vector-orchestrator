@@ -203,10 +203,10 @@
   "_comment": "Clips are written by the benchmark's commands (demonstration.mp4 and evaluation.mp4) and stored content-addressed by sha256; the orchestrator does not encode video."
  },
  "store": {
-  "schema": 4,
+  "schema": 5,
   "index_lines_per_part": 1000,
   "media_bucket_hex": 2,
-  "_layout_comment": "manifest.json; tracks/{track}/{head.json,queue.json,index-NNNN.jsonl}; events/{track}/{event_id}.json; media/{sha[:2]}/{sha}.mp4. Index lines are '<canonical_json>\\t<ed25519_signature_hex>', append-only."
+  "_layout_comment": "manifest.json; tracks/{track}/{head.json,queue.json,index-NNNN.jsonl}; events/{track}/{event_id}.json; media/{sha[:2]}/{sha}.mp4. Index lines are '<canonical_json>', append-only."
  },
  "live": {
   "schema": 4,

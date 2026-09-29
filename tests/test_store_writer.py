@@ -5,7 +5,7 @@ import json
 import pytest
 
 from store_helpers import TRACK, check_store, make_record, publish, small_spec
-from vector_orchestrator.canon import Signer, canonical_json, sha256_file, verify_signature
+from vector_orchestrator.canon import canonical_json, sha256_file
 from vector_orchestrator.ids import SubmissionRef
 from vector_orchestrator.store.records import unit_verdict_from_unit
 from vector_orchestrator.store.writer import Store, store_lock
@@ -15,19 +15,17 @@ CHALLENGER = SubmissionRef.make("org/challenger", "b" * 40)
 
 
 def test_the_layout_the_dashboard_reads(spec, tmp_path):
-    signer = Signer.generate()
-    store = Store(tmp_path / "store", spec, signer)
-    manifest = store.init(signer.verify_key_hex)
+    store = Store(tmp_path / "store", spec)
+    manifest = store.init()
     assert manifest == {
-        "schema": 4,
-        "validator_key": signer.verify_key_hex,
+        "schema": spec.store["schema"],
         "spec_version": spec.version,
         "spec_fingerprint": spec.fingerprint,
         "tracks": [TRACK],
     }
     head = json.loads((tmp_path / "store" / "tracks" / TRACK / "head.json").read_text())
     assert head == {
-        "schema": 4,
+        "schema": spec.store["schema"],
         "seq": 0,
         "event_id": "",
         "block": 0,
@@ -38,15 +36,13 @@ def test_the_layout_the_dashboard_reads(spec, tmp_path):
     record = make_record(spec, "genesis", 0, KING, None)
     publish(store, spec, record)
     line = (tmp_path / "store" / "tracks" / TRACK / "index-0000.jsonl").read_text()
-    body, signature = line.rstrip("\n").split("\t")
     event = tmp_path / "store" / "events" / TRACK / f"{record['event_id']}.json"
-    assert body == canonical_json({**record, "seq": 1, "event_sha256": sha256_file(event)})
-    assert verify_signature(signer.verify_key_hex, body, signature)
+    assert line == canonical_json({**record, "seq": 1, "event_sha256": sha256_file(event)}) + "\n"
 
 
 def test_a_record_without_its_event_is_not_appended(spec, tmp_path):
-    store = Store(tmp_path / "store", spec, Signer.generate())
-    store.init(store.signer.verify_key_hex)
+    store = Store(tmp_path / "store", spec)
+    store.init()
     with pytest.raises(RuntimeError, match="write the event before its record"):
         store.append(TRACK, make_record(spec, "genesis", 0, KING, None))
     assert not store.index_part_path(TRACK, 0).exists()
@@ -54,8 +50,8 @@ def test_a_record_without_its_event_is_not_appended(spec, tmp_path):
 
 def test_append_rotates_parts_and_moves_the_head(spec, tmp_path):
     sp = small_spec(spec, tmp_path)
-    store = Store(tmp_path / "store", sp, Signer.generate())
-    store.init(store.signer.verify_key_hex)
+    store = Store(tmp_path / "store", sp)
+    store.init()
     assert publish(store, sp, make_record(sp, "genesis", 0, KING, None)) == 1
     assert store.head(TRACK)["king"]["key"] == KING.key
     assert publish(store, sp, make_record(sp, "duel", 1, KING, CHALLENGER)) == 2
@@ -70,10 +66,10 @@ def test_append_rotates_parts_and_moves_the_head(spec, tmp_path):
 def test_a_crash_between_the_index_and_the_head_does_not_duplicate_a_seq(
     spec, tmp_path, monkeypatch
 ):
-    """The next seq comes from the signed index, not from head.json: a crash after the line was
+    """The next seq comes from the index, not from head.json: a crash after the line was
     appended and before the head was written must not publish two records under one seq."""
-    store = Store(tmp_path / "store", spec, Signer.generate())
-    store.init(store.signer.verify_key_hex)
+    store = Store(tmp_path / "store", spec)
+    store.init()
     publish(store, spec, make_record(spec, "genesis", 0, KING, None))
 
     def crash(*a, **kw):
@@ -85,7 +81,7 @@ def test_a_crash_between_the_index_and_the_head_does_not_duplicate_a_seq(
     monkeypatch.undo()
     assert store.head(TRACK)["seq"] == 1, "the head did not survive the crash as it was"
 
-    again = Store(store.root, spec, store.signer)
+    again = Store(store.root, spec)
     assert publish(again, spec, make_record(again.spec, "duel", 2, KING, CHALLENGER)) == 3
     assert [r["seq"] for r in again.iter_index(TRACK)] == [1, 2, 3]
     report = check_store(store.root, spec)
@@ -94,8 +90,8 @@ def test_a_crash_between_the_index_and_the_head_does_not_duplicate_a_seq(
 
 def test_a_torn_final_line_is_repaired_before_the_next_append(spec, tmp_path):
     """A half-written line is not a record: it is dropped, and the log stays verifiable."""
-    store = Store(tmp_path / "store", spec, Signer.generate())
-    store.init(store.signer.verify_key_hex)
+    store = Store(tmp_path / "store", spec)
+    store.init()
     publish(store, spec, make_record(spec, "genesis", 0, KING, None))
     with open(store.index_part_path(TRACK, 0), "a") as fh:
         fh.write('{"seq":2,"event_id":"ab')
@@ -104,8 +100,8 @@ def test_a_torn_final_line_is_repaired_before_the_next_append(spec, tmp_path):
 
 
 def test_a_complete_line_that_lost_its_newline_is_kept(spec, tmp_path):
-    store = Store(tmp_path / "store", spec, Signer.generate())
-    store.init(store.signer.verify_key_hex)
+    store = Store(tmp_path / "store", spec)
+    store.init()
     publish(store, spec, make_record(spec, "genesis", 0, KING, None))
     path = store.index_part_path(TRACK, 0)
     path.write_bytes(path.read_bytes().rstrip(b"\n"))
@@ -114,9 +110,22 @@ def test_a_complete_line_that_lost_its_newline_is_kept(spec, tmp_path):
     assert report.ok and report.records == 2, report.errors
 
 
+def test_a_final_line_that_is_json_but_not_canonical_is_dropped(spec, tmp_path):
+    """Only the writer's own form counts as a whole record: anything else was not written by an
+    append, and the next record must not be spliced onto it."""
+    store = Store(tmp_path / "store", spec)
+    store.init()
+    publish(store, spec, make_record(spec, "genesis", 0, KING, None))
+    with open(store.index_part_path(TRACK, 0), "a") as fh:
+        fh.write('{"seq": 2}')
+    assert publish(store, spec, make_record(spec, "duel", 1, KING, CHALLENGER)) == 2
+    report = check_store(store.root, spec)
+    assert report.ok and report.records == 2, report.errors
+
+
 def test_a_torn_final_line_is_skipped_by_readers(spec, tmp_path):
-    store = Store(tmp_path / "store", spec, Signer.generate())
-    store.init(store.signer.verify_key_hex)
+    store = Store(tmp_path / "store", spec)
+    store.init()
     publish(store, spec, make_record(spec, "genesis", 0, KING, None))
     with open(store.index_part_path(TRACK, 0), "a") as fh:
         fh.write('{"seq":2,"event_id":"ab')
@@ -124,7 +133,7 @@ def test_a_torn_final_line_is_skipped_by_readers(spec, tmp_path):
 
 
 def test_media_is_content_addressed(spec, tmp_path):
-    store = Store(tmp_path / "store", spec, Signer.generate())
+    store = Store(tmp_path / "store", spec)
     clip = tmp_path / "evaluation.mp4"
     clip.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"x" * 100)
     sha = store.put_media(clip)
@@ -133,8 +142,8 @@ def test_media_is_content_addressed(spec, tmp_path):
 
 
 def test_a_foreign_kind_carrying_a_king_does_not_take_the_crown(spec, tmp_path):
-    store = Store(tmp_path / "store", spec, Signer.generate())
-    store.init(store.signer.verify_key_hex)
+    store = Store(tmp_path / "store", spec)
+    store.init()
     publish(store, spec, make_record(spec, "genesis", 0, KING, None))
     usurper = SubmissionRef.make("org/usurper", "c" * 40)
     foreign = make_record(spec, "duel", 1, KING, usurper, dethroned=True)

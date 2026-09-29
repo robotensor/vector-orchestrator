@@ -113,7 +113,7 @@ class Checked:
 
 
 def check_store(root: str | Path, spec) -> Checked:
-    """What the tests hold a written store to: every index line whole canonical JSON, seqs
+    """What the tests hold a written store to: every index line a record's canonical JSON, seqs
     contiguous from 1, every event the bytes its record's `event_sha256` names and repeating the
     record, every clip present under its hash, each head the index's last record and the king its
     records crown, and every file the shape store-schema.json gives it."""
@@ -133,9 +133,12 @@ def check_store(root: str | Path, spec) -> Checked:
                 out.errors.append(f"{path.name}: the last line has no newline")
             for n, raw in enumerate(data.split(b"\n")[:-1], start=1):
                 where = f"{track}/{path.name}:{n}"
-                body = raw.split(b"\t", 1)[0].decode("utf-8")
-                record = json.loads(body)
-                if canonical_json(record) != body:
+                try:
+                    record = json.loads(raw.decode("utf-8"))
+                except ValueError:
+                    out.errors.append(f"{where}: not JSON")
+                    continue
+                if canonical_json(record) != raw.decode("utf-8"):
                     out.errors.append(f"{where}: not canonical JSON")
                 seq += 1
                 if record.get("seq") != seq or store.part_of(seq) != part:

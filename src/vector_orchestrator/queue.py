@@ -1,7 +1,7 @@
 """The challenger queues: one per track, one entry per submission key, rewritten atomically.
 
 A queue is local state, not the record. What the dashboard shows is `snapshot()`, written to the
-store as `tracks/{track}/queue.json` (schema 4 `QueueSnapshot`) - unsigned and rewritten every cycle.
+store as `tracks/{track}/queue.json` (`QueueSnapshot`) - a snapshot, rewritten every cycle.
 
 The file is the state, not this object: a long-lived duel loop and a `queue add` on the command
 line hold the same queue. Every mutation takes a lock on the file, reloads, changes and writes, so

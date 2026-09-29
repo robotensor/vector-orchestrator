@@ -19,7 +19,6 @@ from duel_helpers import (
 from store_helpers import check_store, make_record, publish, schema_errors
 from submission_helpers import write_policy_repo
 from vector_orchestrator.benchmarks.units import plugin_units
-from vector_orchestrator.canon import Signer
 from vector_orchestrator.duel.orchestrate import (
     OUTCOME_FILE,
     CrownMoved,
@@ -43,9 +42,8 @@ GONE_REF = SubmissionRef.make("org/gone-policy", "5" * 40)
 
 @pytest.fixture
 def store(duel_spec, tmp_path, fake_installed):
-    signer = Signer.generate()
-    store = Store(tmp_path / "store", duel_spec, signer)
-    store.init(signer.verify_key_hex)
+    store = Store(tmp_path / "store", duel_spec)
+    store.init()
     return store
 
 
@@ -371,7 +369,7 @@ def test_a_duel_killed_after_it_published_does_not_publish_twice(duel_spec, stor
         orchestrator(duel_spec, store, tmp_path, mirror=DiesOnPublish()).run(req)
     assert len(store.iter_index(TRACK)) == 2
     # A restarted process: nothing of what the killed one meant to push is in memory.
-    restarted = Store(store.root, duel_spec, store.signer)
+    restarted = Store(store.root, duel_spec)
     fresh, mirror = FakePolicyRuntime(duel_spec), Recording()
     result = orchestrator(duel_spec, restarted, tmp_path, fresh, mirror=mirror).run(req)
     assert result.published and result.record["seq"] == 2 and result.reason == "margin-met"
@@ -403,7 +401,7 @@ def test_a_duel_killed_between_its_index_line_and_its_head_heals_the_head_when_r
         orchestrator(duel_spec, store, tmp_path).run(req)
     assert len(store.iter_index(TRACK)) == 2 and store.head(TRACK)["king"] == ZERO_REF.as_dict()
 
-    restarted = Store(store.root, duel_spec, store.signer)
+    restarted = Store(store.root, duel_spec)
     result = orchestrator(duel_spec, restarted, tmp_path).run(req)
     assert result.published and result.record["dethroned"] is True
     head = restarted.head(TRACK)

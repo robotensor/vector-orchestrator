@@ -18,7 +18,7 @@
     "repo": "robotensor/vector-replay-policy",
     "revision": "0000000000000000000000000000000000000002"
   },
-  "schema": 4,
+  "schema": 5,
   "track": "franka_1arm",
   "written_at": "2026-09-13T12:00:00Z"
 }

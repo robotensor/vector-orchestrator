@@ -34,7 +34,7 @@ def test_the_shipped_contract_is_one_franka_track_on_robotwin(spec, track):
     assert spec.units_per_side(track, "smoke") == 3 * spec.units_per_skill(track, "smoke")
     assert spec.size_of(track, "bogus") == spec.default_size(track)
     assert 0 <= spec.score_margin(track) <= 100 and 0 <= spec.max_void_fraction(track) <= 1
-    assert spec.store["schema"] == 4 and spec.live["schema"] == 4
+    assert spec.store["schema"] == 5 and spec.live["schema"] == 4
     assert spec.baseline(track) is None
     assert len(spec.fingerprint) == 64
 

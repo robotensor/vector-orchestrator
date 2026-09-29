@@ -25,7 +25,6 @@ from duel_helpers import (
 )
 from store_helpers import check_store, make_record, publish
 from submission_helpers import FAKE_BASE_DIGEST
-from vector_orchestrator.canon import Signer
 from vector_orchestrator.duel.docker_runtime import DockerPolicyRuntime
 from vector_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
 from vector_orchestrator.duel.runtime import (
@@ -94,9 +93,8 @@ def runtime_for(spec, docker, tmp_path, cls=DockerPolicyRuntime, **kwargs):
 
 
 def duel(spec, runtime, tmp_path):
-    signer = Signer.generate()
-    store = Store(tmp_path / "store", spec, signer)
-    store.init(signer.verify_key_hex)
+    store = Store(tmp_path / "store", spec)
+    store.init()
     publish(store, spec, make_record(spec, "genesis", 1, ZERO_REF, None))
     orchestrator = Orchestrator(
         spec, store, runtime, tmp_path / "runs", live=RecordingReporter(spec)

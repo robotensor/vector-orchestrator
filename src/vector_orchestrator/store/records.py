@@ -1,4 +1,4 @@
-"""Constructors for published records. Shapes are formalised in `store-schema.json` (schema 4),
+"""Constructors for published records. Shapes are formalised in `store-schema.json`,
 and the dashboard reads them field by field (`lib/store.ts`), so a field here is a contract."""
 
 from __future__ import annotations

@@ -9,8 +9,7 @@ publishes: a genesis names its duel id and carries its units and scores, every u
 derived through the fake benchmark exactly as a duel derives them, so their ids, seeds and skills
 are what the orchestrator would publish.
 
-It is NOT a competition result. It is signed with a key derived from a public string (below), so
-anyone can forge records under it; its only use is rendering the dashboard against the layout this
+It is NOT a competition result. Its only use is rendering the dashboard against the layout this
 orchestrator writes (`VECTOR_STORE=<abs path to tests/fixtures/store> npm run dev`) and catching an
 unintended change to that layout. Clips are not included (units carry no video hashes).
 
@@ -32,7 +31,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import vector_fake_benchmark  # noqa: E402
 
 from vector_orchestrator.benchmarks.units import plugin_units  # noqa: E402
-from vector_orchestrator.canon import Signer, canonical_sha256  # noqa: E402
+from vector_orchestrator.canon import canonical_sha256  # noqa: E402
 from vector_orchestrator.duel import score  # noqa: E402
 from vector_orchestrator.ids import SubmissionRef, duel_id, event_id  # noqa: E402
 from vector_orchestrator.queue import Queue  # noqa: E402
@@ -48,8 +47,6 @@ from vector_orchestrator.store.writer import Store  # noqa: E402
 TRACK = "franka_1arm"
 SIZE = "light"
 GENESIS_SIZE = "smoke"
-#: Public on purpose: this key signs nothing that matters.
-FIXTURE_SEED = hashlib.sha256(b"vector-orchestrator fixture store; not a secret").digest()
 
 KING = SubmissionRef.make("robotensor/vector-zero-policy", "0" * 39 + "1")
 CHALLENGER = SubmissionRef.make("robotensor/vector-replay-policy", "0" * 39 + "2")
@@ -61,9 +58,8 @@ def build(out: Path) -> Path:
     spec = load_spec_file(ROOT / "spec.json")
     if out.exists():
         shutil.rmtree(out)
-    signer = Signer(FIXTURE_SEED)
-    store = Store(out, spec, signer)
-    store.init(signer.verify_key_hex)
+    store = Store(out, spec)
+    store.init()
     schema = int(spec.store["schema"])
     margin = spec.score_margin(TRACK)
     skills = spec.skills(TRACK)

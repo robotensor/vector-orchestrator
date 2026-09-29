@@ -11,7 +11,7 @@ description = "Orchestration layer of Robotensor Vector, the action-grounded in-
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-dependencies = ["pynacl>=1.5", "huggingface_hub>=1.0"]
+dependencies = ["huggingface_hub>=1.0"]
 
 [project.scripts]
 vector-orchestrator = "vector_orchestrator.cli:main"

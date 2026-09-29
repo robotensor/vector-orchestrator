@@ -160,7 +160,7 @@ def voided(reason: str, *, wall_s: float = 0.0) -> Outcome:
 
 
 def _finite(value: Any) -> bool:
-    """A JSON number that can be scored and signed: `json.loads` accepts NaN and Infinity, which
+    """A JSON number that can be scored and published: `json.loads` accepts NaN and Infinity, which
     `int()` refuses and canonical JSON cannot encode."""
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 

@@ -11,7 +11,6 @@ import pytest
 
 from store_helpers import TRACK, check_store
 from submission_helpers import SHA_A, FakeHub
-from vector_orchestrator.canon import Signer
 from vector_orchestrator.cli import main
 from vector_orchestrator.ids import SubmissionRef
 from vector_orchestrator.queue import Queue
@@ -34,47 +33,18 @@ def cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run([str(script), *args], capture_output=True, text=True, cwd=cwd)
 
 
-def test_store_init_writes_the_manifest_and_a_head_per_track(tmp_path):
+def test_store_init_writes_the_manifest_and_a_head_per_track(spec, tmp_path):
     root = tmp_path / "store"
     init = cli("store", "init", str(root), cwd=tmp_path)
     assert init.returncode == 0, init.stderr
     manifest = json.loads(init.stdout)
-    key = tmp_path / "keys" / "orchestrator.ed25519"
-    assert "generated signing key" in init.stderr and key.stat().st_mode & 0o777 == 0o600
-    assert manifest["validator_key"] == Signer.from_file(key).verify_key_hex
+    assert manifest == json.loads((root / "manifest.json").read_text())
+    assert set(manifest) == {"schema", "spec_version", "spec_fingerprint", "tracks"}
     assert (root / "tracks" / TRACK / "head.json").exists()
-
-
-def test_init_refuses_to_resign_a_store_with_another_key(tmp_path):
-    root = tmp_path / "store"
-    assert cli("store", "init", str(root), "--key", str(tmp_path / "a")).returncode == 0
-    again = cli("store", "init", str(root), "--key", str(tmp_path / "a"))
-    assert again.returncode == 0, "re-initialising with the same key is idempotent"
-    assert (
-        cli("store", "init", str(tmp_path / "other"), "--key", str(tmp_path / "b")).returncode == 0
-    )
-    other = cli("store", "init", str(root), "--key", str(tmp_path / "b"))
-    assert other.returncode == 1 and "would invalidate every record" in other.stderr
-
-
-def test_init_on_a_store_whose_key_is_missing_generates_nothing(tmp_path):
-    """A key generated before the store was looked at is left lying in keys/, where the next run
-    picks it up as the store's key."""
-    root = tmp_path / "store"
-    assert cli("store", "init", str(root), "--key", str(tmp_path / "a")).returncode == 0
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    done = cli("store", "init", str(root), cwd=elsewhere)
-    assert done.returncode == 1 and "generated signing key" not in done.stderr
-    assert "cannot be re-initialised" in done.stderr
-    assert not (elsewhere / "keys").exists()
-
-
-def test_init_refuses_a_key_inside_the_store(tmp_path):
-    root = tmp_path / "store"
-    done = cli("store", "init", str(root), "--key", str(root / "keys" / "k"))
-    assert done.returncode == 2 and "outside the store" in done.stderr
-    assert not (root / "keys").exists()
+    assert check_store(root, spec).ok
+    again = cli("store", "init", str(root), cwd=tmp_path)
+    assert again.returncode == 0 and json.loads(again.stdout) == manifest
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["store"], "init wrote beside the store"
 
 
 def test_queue_add_list_remove_and_publish_the_snapshot(spec, hub, tmp_path, capsys):

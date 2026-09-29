@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import huggingface_hub
 import pytest
 
-from vector_orchestrator.canon import Signer
 from vector_orchestrator.store import mirror
 from vector_orchestrator.store.writer import Store, store_lock
 
@@ -39,8 +38,8 @@ def api(monkeypatch):
 
 @pytest.fixture
 def store(spec, tmp_path):
-    s = Store(tmp_path / "store", spec, Signer.generate())
-    s.init(s.signer.verify_key_hex)
+    s = Store(tmp_path / "store", spec)
+    s.init()
     with store_lock(s.root):
         pass
     (s.root / "tracks" / "franka_1arm" / "queue.json.tmp").write_text("{")

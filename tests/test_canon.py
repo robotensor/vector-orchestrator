@@ -1,10 +1,4 @@
-from vector_orchestrator.canon import (
-    Signer,
-    canonical_json,
-    canonical_sha256,
-    sha256_hex,
-    verify_signature,
-)
+from vector_orchestrator.canon import canonical_json, canonical_sha256, sha256_hex
 
 
 def test_canonical_json_is_sorted_and_compact():
@@ -19,31 +13,8 @@ def test_sha256_matches_known_vector():
     assert canonical_sha256({"a": 1}) == sha256_hex('{"a":1}')
 
 
-def test_sign_verify_roundtrip_and_tamper(tmp_path):
-    signer = Signer.generate()
-    signer.save(tmp_path / "k")
-    assert (tmp_path / "k").stat().st_mode & 0o777 == 0o600
-    reloaded = Signer.from_file(tmp_path / "k")
-    assert reloaded.verify_key_hex == signer.verify_key_hex
-    msg = canonical_json({"seq": 1})
-    sig = signer.sign(msg)
-    assert verify_signature(signer.verify_key_hex, msg, sig)
-    assert not verify_signature(signer.verify_key_hex, msg.replace("1", "2"), sig)
-    assert not verify_signature(Signer.generate().verify_key_hex, msg, sig)
-    assert not verify_signature(signer.verify_key_hex, msg, "zz")
-
-
-def test_signatures_are_deterministic():
-    """ed25519 signs deterministically, which is what lets a fixture store be byte-reproducible."""
-    signer = Signer(bytes(range(32)))
-    assert signer.sign("x") == Signer(bytes(range(32))).sign("x")
-
-
-def test_a_signature_is_over_the_published_bytes_not_a_re_encoding():
-    """Number formatting is Python's: a verifier must check the line as published. `3.0` here is
-    `3` to JSON.stringify and to RFC 8785, so a re-encoded record is a different message."""
+def test_numbers_are_formatted_as_python_formats_them():
+    """`3.0` is `3` to JSON.stringify and to RFC 8785, so a reader hashing a record hashes the line
+    as published, never a re-encoding of it."""
     assert canonical_json({"score_margin": 3.0}) == '{"score_margin":3.0}'
-    signer = Signer(bytes(range(32)))
-    line = canonical_json({"score_margin": 3.0})
-    assert verify_signature(signer.verify_key_hex, line, signer.sign(line))
-    assert not verify_signature(signer.verify_key_hex, '{"score_margin":3}', signer.sign(line))
+    assert canonical_sha256({"score_margin": 3.0}) != sha256_hex('{"score_margin":3}')

@@ -1,7 +1,7 @@
 """Live progress frames: ephemeral, best-effort, never part of the record.
 
 The dashboard's `POST /api/live` checks a frame strictly where a wrong value would misfile it -
-schema, validator key, track, event id, phase, side - and silently drops a unit whose skill it does
+schema, track, event id, phase, side - and silently drops a unit whose skill it does
 not know. So `build_frame` refuses to build a frame the dashboard would refuse or quietly thin out,
 and the error surfaces here rather than as a 422 nobody reads or a progress bar with rows missing.
 """
@@ -35,7 +35,6 @@ SIDES = ("challenger", "king")
 #: The dashboard's own bounds on the fields it routes by. Matched with `fullmatch`: JavaScript's
 #: `$` is the end of the string, Python's also matches before a final newline.
 EVENT_ID_RE = re.compile(r"[0-9a-f]{8,64}")
-MAX_VALIDATOR_KEY = 128
 MAX_MESSAGE = 300
 
 
@@ -43,7 +42,6 @@ def build_frame(
     spec: Spec,
     *,
     track: str,
-    validator_key: str,
     event_id: str,
     kind: str,
     duel_size: str | None,
@@ -65,8 +63,6 @@ def build_frame(
         raise ValueError(f"event_id must be 8-64 lowercase hex characters, not {event_id!r}")
     if side is not None and side not in SIDES:
         raise ValueError(f"side must be one of {SIDES} or None, not {side!r}")
-    if not validator_key.strip() or len(validator_key) > MAX_VALIDATOR_KEY:
-        raise ValueError("validator_key must be a non-empty string of at most 128 characters")
     skills = spec.skills(track)
     unknown = sorted({str(u.get("skill")) for u in units} - set(skills))
     if unknown:
@@ -118,7 +114,6 @@ def build_frame(
     ]
     return {
         "schema": int(spec.live["schema"]),
-        "validator_key": validator_key,
         "track": track,
         "event_id": event_id,
         "kind": kind,

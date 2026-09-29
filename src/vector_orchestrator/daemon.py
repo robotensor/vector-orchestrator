@@ -159,8 +159,7 @@ class Daemon:
         serves beside the loop (the submission intake) starts there, so it never serves beside
         another daemon, and a daemon that cannot take its store never starts it."""
         with store_lock(self.store.root):
-            key = self.store.signer.verify_key_hex if self.store.signer else "?"
-            log.info("orchestrator %s serving %s", key[:12], self.store.root)
+            log.info("orchestrator serving %s", self.store.root)
             self.orchestrator.reap_orphans()
             for track in self.queues.tracks:
                 self.publish_queue(track)

@@ -20,7 +20,6 @@ from duel_helpers import (
 )
 from store_helpers import check_store, make_record, publish, schema_errors
 from vector_orchestrator.benchmarks.units import plugin_units
-from vector_orchestrator.canon import Signer
 from vector_orchestrator.daemon import Daemon
 from vector_orchestrator.duel.orchestrate import DuelRequest, Orchestrator
 from vector_orchestrator.ids import SubmissionRef
@@ -31,14 +30,9 @@ TRACK = "franka_1arm"
 
 
 @pytest.fixture
-def signer():
-    return Signer.generate()
-
-
-@pytest.fixture
-def store(duel_spec, tmp_path, signer, fake_installed):
-    store = Store(tmp_path / "store", duel_spec, signer)
-    store.init(signer.verify_key_hex)
+def store(duel_spec, tmp_path, fake_installed):
+    store = Store(tmp_path / "store", duel_spec)
+    store.init()
     return store
 
 
@@ -49,7 +43,7 @@ def queues(duel_spec, tmp_path):
 
 def daemon(spec, store, tmp_path, runtime=None, **kwargs):
     """A daemon as a fresh process would make one: its own store object, runtime and reporter."""
-    fresh = Store(store.root, spec, store.signer)
+    fresh = Store(store.root, spec)
     orchestrator = Orchestrator(
         spec,
         fresh,

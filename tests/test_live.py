@@ -103,9 +103,6 @@ def parse_live_frame(raw, tracks, skills, live_schema):
         return {"ok": False, "reason": "Body must be a JSON object."}
     if raw.get("schema") != live_schema or isinstance(raw.get("schema"), bool):
         return {"ok": False, "reason": f"schema must be {live_schema}."}
-    key = raw.get("validator_key")
-    if not isinstance(key, str) or not key.strip() or len(key) > 128:
-        return {"ok": False, "reason": "validator_key must be a non-empty string."}
     if not isinstance(raw.get("track"), str) or raw["track"] not in tracks:
         return {"ok": False, "reason": f"track must be one of: {', '.join(tracks)}."}
     if not isinstance(raw.get("event_id"), str) or not EVENT_ID.fullmatch(raw["event_id"]):
@@ -173,7 +170,6 @@ def duel_units(spec):
 def frame(spec, **overrides):
     kwargs = dict(
         track=TRACK,
-        validator_key="d" * 64,
         event_id="e" * 64,
         kind="duel",
         duel_size="smoke",
@@ -258,7 +254,6 @@ def test_a_large_unit_list_is_slimmed_to_fit_rather_than_refused(spec):
         ({"event_id": "not-hex"}, "event_id must be 8-64 lowercase hex"),
         ({"event_id": "E" * 64}, "event_id must be 8-64 lowercase hex"),
         ({"side": "referee"}, "side must be one of"),
-        ({"validator_key": ""}, "validator_key must be a non-empty string"),
         ({"units": [{"skill": "rt_stacking", "task": "t", "instance": 0}]}, "does not score"),
         # Python's `$` matches before a final newline; the dashboard's regex does not.
         ({"event_id": "deadbeef\n"}, "event_id must be 8-64 lowercase hex"),
@@ -286,7 +281,6 @@ def test_the_encoded_rules_do_refuse_what_the_dashboard_refuses(spec):
     skills = spec.skills(TRACK)
     for key, value in (
         ("schema", 3),
-        ("validator_key", " "),
         ("track", "video_only"),
         ("event_id", "abc"),
         ("phase", "scoring"),

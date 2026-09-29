@@ -1,6 +1,6 @@
-"""The committed fixture store is what the orchestrator writes today, verifies, and reads the way
-the dashboard's `lib/store.ts` (robotensor/robotensor-competition-dashboard, milestone-two-contests)
-reads a store."""
+"""The committed fixture store is what the orchestrator writes today, holds together, and reads
+the way the dashboard's `lib/store.ts` (robotensor/robotensor-competition-dashboard,
+milestone-two-contests) reads a store."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def test_the_dashboard_can_read_the_fixture_store(spec):
     for line in (STORE / "tracks" / track / "index-0000.jsonl").read_text().split("\n"):
         if not line.strip():
             continue
-        record = json.loads(line[: line.index("\t")])
+        record = json.loads(line)
         # parseIndexPart keeps a record only with a numeric seq and string event_id and kind.
         assert isinstance(record["seq"], int) and isinstance(record["event_id"], str)
         assert isinstance(record["kind"], str)

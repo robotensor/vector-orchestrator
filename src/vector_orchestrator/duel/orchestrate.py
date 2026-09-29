@@ -294,8 +294,6 @@ class Orchestrator:
         resolve: Callable[[str], Any] | None = None,
         workers: int = 1,
     ) -> None:
-        if store.signer is None:
-            raise ValueError("the store has no signer; a duel cannot publish without one")
         self.spec = spec
         self.store = store
         self.runtime = runtime
@@ -803,7 +801,7 @@ class Orchestrator:
 
     def _prompts_published(self, duel: _Duel) -> list[dict[str, Any]]:
         """The event's `prompts`: every prompt both sides ran from, by sha256, with the unit's
-        demonstration clip only where the store holds it (`media.demo_video`) - a signed event
+        demonstration clip only where the store holds it (`media.demo_video`) - a published event
         never names a clip the store does not have."""
         if duel.prompts is None:
             return []
@@ -922,7 +920,6 @@ class Orchestrator:
             frame = build_frame(
                 self.spec,
                 track=req.track,
-                validator_key=self.store.signer.verify_key_hex,  # type: ignore[union-attr]
                 event_id=duel.event_id,
                 kind=req.kind,
                 duel_size=duel.size,

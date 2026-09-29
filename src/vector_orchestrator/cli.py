@@ -59,41 +59,11 @@ def cmd_benchmarks(args: argparse.Namespace) -> int:
 def cmd_store(args: argparse.Namespace) -> int:
     spec = _spec(args)
     if args.store_cmd == "init":
-        from .canon import Signer
         from .store.writer import Store, store_lock
 
-        key = Path(args.key)
         root = Path(args.root).resolve()
-        if key.resolve().is_relative_to(root):
-            print(f"error: the signing key must live outside the store ({root})", file=sys.stderr)
-            return 2
-        store = Store(root, spec)
-        existing = store.manifest()
-        if key.exists():
-            signer = Signer.from_file(key)
-        elif existing:
-            # Generating one here would leave an unrelated seed behind for a later run to pick up
-            # as the store's key.
-            print(
-                f"error: {root} is signed by {existing.get('validator_key')} and {key} does not "
-                "exist, so it cannot be re-initialised; point --key at its signing key",
-                file=sys.stderr,
-            )
-            return 1
-        else:
-            signer = Signer.generate()
-            signer.save(key)
-            print(f"generated signing key {key} (mode 0600)", file=sys.stderr)
-        store.signer = signer
-        if existing and existing.get("validator_key") != signer.verify_key_hex:
-            print(
-                f"error: {root} is signed by {existing.get('validator_key')}, not by {key}; "
-                "re-initialising it with another key would invalidate every record",
-                file=sys.stderr,
-            )
-            return 1
         with store_lock(root):
-            manifest = store.init(signer.verify_key_hex)
+            manifest = Store(root, spec).init()
         print(json.dumps(manifest, indent=2, sort_keys=True))
         return 0
 
@@ -278,22 +248,14 @@ def _orchestrator(args: argparse.Namespace, spec):
     """The store, runtime, live reporter and mirror a duel or the daemon publishes with."""
     import os
 
-    from .canon import Signer
     from .duel.orchestrate import Orchestrator
     from .live import LiveReporter
     from .store.writer import Store
 
     local = _local_dirs(args.local)
-    key = Path(args.key)
-    if not key.is_file():
-        raise ValueError(f"no signing key at {key}; `store init` writes one, or pass --key")
-    signer = Signer.from_file(key)
-    store = Store(args.store, spec, signer)
-    manifest = store.manifest()
-    if manifest is None:
+    store = Store(args.store, spec)
+    if store.manifest() is None:
         raise ValueError(f"{args.store} is not a store; run `vector-orchestrator store init` first")
-    if manifest.get("validator_key") != signer.verify_key_hex:
-        raise ValueError(f"{args.store} is signed by {manifest.get('validator_key')}, not by {key}")
     if args.runtime == "local":
         from .duel.local_runtime import SubprocessPolicyRuntime
 
