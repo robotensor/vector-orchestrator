@@ -5,12 +5,15 @@ build-backend = "hatchling.build"
 [project]
 name = "robotensor-vector-runtime"
 version = "0.3.0"
-description = "The validator's runtime for vector_v1.1 weights: check, load and serve a submission."
+description = "Validator runtime for Robotensor Vector: check, load and serve vector_v1.1 weights."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 # `vector-runtime check` runs on the validator host, which has no torch: the standard library only.
 dependencies = []
+
+[project.urls]
+Repository = "https://github.com/robotensor/vector-orchestrator"
 
 [project.optional-dependencies]
 model = [

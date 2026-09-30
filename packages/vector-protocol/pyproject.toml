@@ -5,12 +5,15 @@ build-backend = "hatchling.build"
 [project]
 name = "robotensor-vector-protocol"
 version = "0.2.0"
-description = "The policy protocol of Robotensor Vector: a policy served in its own process."
+description = "Policy protocol for Robotensor Vector: serve a policy in its own process."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 # Installed into every competitor's image, next to whatever the competitor pins: keep it to these.
 dependencies = ["numpy>=1.23", "PyYAML>=6.0"]
+
+[project.urls]
+Repository = "https://github.com/robotensor/vector-orchestrator"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
