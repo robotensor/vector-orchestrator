@@ -182,7 +182,7 @@ class Completed:
 #: How often a running subprocess's CPU time is sampled for the stall watchdog.
 STALL_POLL_S = 2.0
 #: Below this many cores over the whole stall window, a process group is hung, not slow. Measured
-#: (RoboTwin-Vector docs/install.md, "Rendering"): hung camera reads used 0.004-0.07 cores, healthy
+#: (SAPIEN rendering through the NVIDIA Vulkan driver): hung camera reads used 0.004-0.07 cores, healthy
 #: simulator work never under 0.25 over 5 s; a unit waiting on its remote policy (~65 ms an act
 #: against a ~0.15 s step) stays far above this.
 MIN_CPU_RATE = 0.1

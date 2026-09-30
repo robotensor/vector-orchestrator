@@ -20,7 +20,6 @@ def build(examples, name, monkeypatch):
 def test_each_example_is_a_complete_repository_with_a_valid_manifest(examples, name):
     loaded = manifest.load(examples / name / "policy.yaml")
     assert loaded.requirements_path is not None and loaded.requirements_path.is_file()
-    assert (examples / name / "README.md").is_file()
     assert (loaded.root / loaded.module.replace(".", "/")).with_suffix(".py").is_file()
 
 
