@@ -71,7 +71,7 @@ from pathlib import Path
 from typing import Any
 
 from ..ids import SubmissionRef, duel_id, event_id
-from ..live import LiveReporter, build_frame
+from ..progress import ProgressBoard, build_progress
 from ..runner import RUNNING
 from ..spec import Spec
 from ..store.records import index_record, media_shas, now_iso, unit_row
@@ -248,7 +248,7 @@ class DuelResult:
 
 @dataclass
 class _Duel:
-    """One run of one duel: what the phases share, and what a live frame shows."""
+    """One run of one duel: what the phases share, and what its progress shows."""
 
     req: DuelRequest
     duel_id: str
@@ -270,6 +270,8 @@ class _Duel:
     pending_media: dict[tuple[str, str], Path] = field(default_factory=dict)
     #: Why the king forfeits, when its submission was refused.
     forfeit: str | None = None
+    #: How the duel ended, once it has (`progress.OUTCOMES`).
+    outcome: dict[str, Any] | None = None
 
     def row(self, unit_id: str) -> dict[str, Any]:
         return next(u for u in self.units if u["unit_id"] == unit_id)
@@ -285,7 +287,7 @@ class Orchestrator:
         runtime: Any,
         run_root: str | Path,
         *,
-        live: LiveReporter | None = None,
+        progress: ProgressBoard | None = None,
         mirror: Any | None = None,
         benchmark: Any | None = None,
         workers: int = 1,
@@ -302,10 +304,11 @@ class Orchestrator:
         #: The GPUs to use; None for the host's (`slots.gpus`), read as each duel starts, since a
         #: validator's GPU lease sets CUDA_VISIBLE_DEVICES for the step it runs a duel in.
         self.cards = list(cards) if cards is not None else None
-        #: What the duel's workers share: its rows, live frames and the store.
+        #: What the duel's workers share: its rows, its progress and the store.
         self._lock = threading.RLock()
-        self.live = live or LiveReporter(None, None)
         self.mirror = mirror
+        #: Where the running duel's progress goes: the store's `running.json`, mirrored with it.
+        self.progress = progress or ProgressBoard(store, push=self.push_touched)
         #: The RoboTwin-Vector checkout (`robotwin.RoboTwin`), found on first use; a test's fake.
         self._benchmark = benchmark
 
@@ -378,7 +381,15 @@ class Orchestrator:
         reason = f"the crown moved from {was} to {who} since this duel was asked for"
         log.warning("duel %s is stale: %s; its run is at %s", run_dir.name, reason, moved)
         if duel is not None:
-            self._post(duel, force=True, phase="failed", side=None, message=f"stale: {reason}")
+            self._post(
+                duel,
+                force=True,
+                phase="failed",
+                side=None,
+                current=None,
+                message=f"stale: {reason}",
+                outcome={"status": "stale", "reason": reason},
+            )
         raise CrownMoved(req, reason, moved)
 
     # -- the duel ---------------------------------------------------------------------------
@@ -674,7 +685,14 @@ class Orchestrator:
 
     def _publish(self, duel: _Duel) -> DuelResult:
         spec, req = self.spec, duel.req
-        self._post(duel, force=True, phase="publishing", side=None, message="publishing the record")
+        self._post(
+            duel,
+            force=True,
+            phase="publishing",
+            side=None,
+            current=None,
+            message="publishing the record",
+        )
         existing = self._published(duel.event_id)
         if existing is not None:
             return self._republished(req, existing)
@@ -748,7 +766,19 @@ class Orchestrator:
         )
         atomic_write_json(duel.run_dir / OUTCOME_FILE, result_.as_dict())
         moved = "moves" if dethroned or req.kind == "genesis" else "stays"
-        self._post(duel, force=True, phase="done", message=f"the crown {moved}: {reason}")
+        self._post(
+            duel,
+            force=True,
+            phase="done",
+            message=f"the crown {moved}: {reason}",
+            outcome={
+                "status": "published",
+                "dethroned": dethroned,
+                "reason": reason,
+                "king_score": king_scores["average"],
+                "challenger_score": challenger_scores["average"] if challenger_scores else None,
+            },
+        )
         return result_
 
     def _republished(self, req: DuelRequest, record: dict[str, Any]) -> DuelResult:
@@ -809,7 +839,15 @@ class Orchestrator:
             units=duel.units,
         )
         atomic_write_json(duel.run_dir / OUTCOME_FILE, {**result.as_dict(), "sides": duel.sides})
-        self._post(duel, force=True, phase="failed", side=None, message=f"{status}: {reason}")
+        self._post(
+            duel,
+            force=True,
+            phase="failed",
+            side=None,
+            current=None,
+            message=f"{status}: {reason}",
+            outcome={"status": status, "reason": reason},
+        )
         return result
 
     def _failed(self, duel: _Duel, reason: str) -> None:
@@ -818,7 +856,15 @@ class Orchestrator:
             (duel.run_dir / FAILED_FILE).write_text(reason + "\n", encoding="utf-8")
         except OSError:
             pass
-        self._post(duel, force=True, phase="failed", side=None, message=f"failed: {reason}")
+        self._post(
+            duel,
+            force=True,
+            phase="failed",
+            side=None,
+            current=None,
+            message=f"failed: {reason}",
+            outcome={"status": "failed", "reason": reason},
+        )
 
     # -- plumbing ---------------------------------------------------------------------------
 
@@ -857,7 +903,7 @@ class Orchestrator:
             setattr(duel, key, value)
         req = duel.req
         try:
-            frame = build_frame(
+            doc = build_progress(
                 event_id=duel.event_id,
                 kind=req.kind,
                 king=req.king.as_dict() if req.king else None,
@@ -868,11 +914,12 @@ class Orchestrator:
                 current=duel.current,
                 message=duel.message,
                 started_at=duel.started_at,
+                outcome=duel.outcome,
             )
         except ValueError:
-            log.exception("a live frame could not be built")
+            log.exception("the duel's progress could not be built")
             return
-        self.live.post(frame, force=force)
+        self.progress.post(doc, force=force)
 
 
 def _other(side: str) -> str:

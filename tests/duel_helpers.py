@@ -1,5 +1,5 @@
-"""What the duel tests share: the example policies, a runtime with faults, a recording reporter,
-and a benchmark that voids chosen units for the harness."""
+"""What the duel tests share: the example policies, a runtime with faults, a recording progress
+board, and a benchmark that voids chosen units for the harness."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 
 from vector_orchestrator.duel.runtime import SubprocessPolicyRuntime
 from vector_orchestrator.ids import SubmissionRef
-from vector_orchestrator.live import LiveReporter
+from vector_orchestrator.progress import ProgressBoard
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "packages" / "vector-protocol" / "examples"
 REPLAY = EXAMPLES / "replay_policy"
@@ -105,22 +105,18 @@ def harness_voiding(units: set[str], side: str = "challenger"):
     return HarnessVoiding()
 
 
-class RecordingReporter(LiveReporter):
-    """Every frame a duel builds, kept rather than posted."""
+class RecordingBoard(ProgressBoard):
+    """Every progress document a duel writes, kept as well as written; never pushed."""
 
-    def __init__(self, spec: Any = None) -> None:
-        super().__init__(None, None)
-        self.frames: list[dict[str, Any]] = []
+    def __init__(self, store: Any) -> None:
+        super().__init__(store)
+        self.docs: list[dict[str, Any]] = []
 
-    @property
-    def enabled(self) -> bool:
-        return True
-
-    def post(self, frame: dict[str, Any], *, force: bool = False) -> bool:
-        self.frames.append(frame)
-        return True
+    def post(self, doc: dict[str, Any], *, force: bool = False) -> None:
+        self.docs.append(doc)
+        super().post(doc, force=force)
 
     @property
     def phases(self) -> list[str]:
-        """The phases in the order they were first posted."""
-        return list(dict.fromkeys(f["phase"] for f in self.frames))
+        """The phases in the order they were first written."""
+        return list(dict.fromkeys(d["phase"] for d in self.docs))

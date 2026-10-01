@@ -50,6 +50,8 @@ vector-orchestrator store mirror --root store/ --repo owner/results
 manifest.json              schema and spec version
 head.json                  current seq, block and king
 queue.json                 validator queue
+running.json               the duel running now and how far it has got
+champions.json             the models the validator pays now
 index-NNNN.jsonl           one line per duel
 events/<event_id>.json     units, per-task scores, verdict, seed block
 media/<sha[:2]>/<sha>.mp4  demonstration and rollout clips

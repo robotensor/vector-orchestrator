@@ -105,7 +105,5 @@ def test_what_the_duel_command_refuses(cli_spec, store, tmp_path, capsys):
     assert "no local directory for org/nobody" in capsys.readouterr().err
     assert run(cli_spec, store, tmp_path, "--challenger", "no-revision") == 2
     assert "is not owner/name@revision" in capsys.readouterr().err
-    assert run(cli_spec, store, tmp_path, "--challenger", REPLAY_AT, "--live-url", "http://x") == 2
-    assert "--live-token-env" in capsys.readouterr().err
     assert run(cli_spec, tmp_path / "nothing", tmp_path, "--challenger", REPLAY_AT) == 2
     assert "is not a store" in capsys.readouterr().err

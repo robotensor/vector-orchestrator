@@ -65,9 +65,8 @@ def cmd_store(args: argparse.Namespace) -> int:
 
 
 def _orchestrator(args: argparse.Namespace, spec):
-    """The store, runtime, live reporter and mirror a duel publishes with."""
+    """The store, runtime and mirror a duel publishes with."""
     from .duel.orchestrate import Orchestrator
-    from .live import LiveReporter
     from .store.writer import Store
 
     store = Store(args.store, spec)
@@ -88,18 +87,12 @@ def _orchestrator(args: argparse.Namespace, spec):
             cache_root=args.cache,
             kwargs=_pairs(args.policy_kwarg, "--policy-kwarg"),
         )
-    token = os.environ.get(args.live_token_env) if args.live_token_env else None
-    if args.live_url and not token:
-        raise ValueError("--live-url needs --live-token-env naming a variable that holds the token")
     mirror = None
     if args.mirror:
         from .store.mirror import Mirror
 
         mirror = Mirror(store.root, args.mirror, token=os.environ.get("HF_TOKEN"))
-    live = LiveReporter(args.live_url, token)
-    return Orchestrator(
-        spec, store, runtime, args.run_dir, live=live, mirror=mirror, workers=args.workers
-    )
+    return Orchestrator(spec, store, runtime, args.run_dir, mirror=mirror, workers=args.workers)
 
 
 def _pairs(pairs: list[str] | None, flag: str) -> dict[str, str]:
@@ -297,8 +290,6 @@ def build_parser() -> argparse.ArgumentParser:
     du.add_argument(
         "--local", action="append", metavar="REPO=DIR", help="serve REPO's policy.yaml from DIR"
     )
-    du.add_argument("--live-url", default=None, help="the dashboard's base url for live frames")
-    du.add_argument("--live-token-env", default=None, metavar="NAME")
     du.add_argument(
         "--mirror", default=None, metavar="REPO", help="push what is published to this dataset"
     )

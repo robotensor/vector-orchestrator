@@ -24,7 +24,7 @@ REPO_OWNED = frozenset({".gitattributes", "README.md"})
 #: half-written `.tmp` files are the store's own bookkeeping and are not part of what a reader
 #: reads.
 STORE_LAYOUT = re.compile(
-    r"(?:manifest|head|queue)\.json"
+    r"(?:manifest|head|queue|running|champions)\.json"
     r"|index-\d{4,}\.jsonl"
     r"|events/[0-9a-f]{64}\.json"
     r"|media/[0-9a-f]{2}/[0-9a-f]{64}\.mp4"
