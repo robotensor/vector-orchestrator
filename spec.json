@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 1,
   "benchmark": {
     "repo": "robotensor/RoboTwin-Vector",
     "branch": "vector"
