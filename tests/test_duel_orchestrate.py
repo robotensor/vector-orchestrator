@@ -262,7 +262,10 @@ def test_a_duel_with_too_many_units_void_for_the_harness_is_void(duel_spec, stor
     assert not first["void"] and second["void"] and not third["void"]
     assert "the simulator lost it" in second["challenger_error"]
     assert third["challenger_success"] is None, "a unit was played for a duel already void"
-    assert third["unit_id"] not in {unit for _, unit in runtime.serves}
+    # The king's step ran every unit before the challenger's began; the challenger stopped at
+    # the void that made the duel void.
+    assert (REPLAY_REF.repo, third["unit_id"]) not in runtime.serves
+    assert (ZERO_REF.repo, third["unit_id"]) in runtime.serves
     assert len(store.iter_index()) == 1, "a void duel was published"
     assert store.head()["king"] == ZERO_REF.as_dict()
     outcome = json.loads((duel.run_dir(req) / OUTCOME_FILE).read_text())
@@ -629,7 +632,10 @@ def test_a_duel_runs_on_every_card_it_is_given(workers, duel_spec, store, tmp_pa
             )
     assert seen == {"a", "b"}, "the units did not use both cards"
     plays = 2 * len(result.units)
-    assert listening < plays, "no unit was served by a server kept from an earlier one"
+    # The sides play one after another, so a kept server is reused only when a side has more
+    # units than there are slots.
+    if len(result.units) > 2 * workers:
+        assert listening < plays, "no unit was served by a server kept from an earlier one"
     assert not list(run_dir.glob("slots/*/pids.json")) or all(
         json.loads(p.read_text()) == [] for p in run_dir.glob("slots/*/pids.json")
     ), "a kept server outlived its duel"

@@ -1,12 +1,13 @@
 """A duel from request to published record.
 
-    fetching -> checking -> materializing + evaluating(challenger) + evaluating(king)
+    fetching -> checking -> materializing -> evaluating(king) -> evaluating(challenger)
              -> publishing -> done | failed
 
-**Where it runs.** Once both sides are checked, the demonstrations and both sides' units run
-together in the duel's `Slots`: `workers` slots on each GPU of the host (`slots.gpus`), a job in a
-slot at a time, on that slot's card. A unit is played by both sides as soon as its prompt lands,
-before new demonstrations are made, and each slot keeps its policy server between units.
+**Where it runs.** Once both sides are checked, the duel runs in three steps, one after another:
+every unit's demonstration, then the king's units, then the challenger's (a genesis has no king).
+Each step is spread over the duel's `Slots`: `workers` slots on each GPU of the host
+(`slots.gpus`), a job in a slot at a time, on that slot's card; each slot keeps its policy server
+between units.
 
 **Identity.** A duel's id is `ids.duel_id(spec.version, challenger, king)` and its units are
 `units.deal(spec, duel_id, entropy)`, pure functions of those, so anyone holding the record can
@@ -64,7 +65,6 @@ import logging
 import threading
 import time
 from collections.abc import Iterator, Mapping
-from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -92,6 +92,9 @@ FAILED_FILE = "failed.txt"
 #: The king's refusal, recorded once: a resumed duel keeps the forfeit rather than asking again.
 FORFEIT_FILE = "forfeit.json"
 SIDES = ("challenger", "king")
+#: The order the sides play a duel's units in, once every demonstration is made: the king's run
+#: first, so a challenger is measured against a finished one.
+EVALUATION_ORDER = ("king", "challenger")
 #: Finished clips are put in the store (and mirrored) every this many units.
 MEDIA_FLUSH_UNITS = 4
 
@@ -485,36 +488,42 @@ class Orchestrator:
             log.warning("duel %s: the king forfeits: %s", duel.event_id[:16], duel.forfeit)
             atomic_write_json(duel.run_dir / FORFEIT_FILE, {"side": "king", "reason": duel.forfeit})
 
-        # ---- materializing and evaluating, together in the slots
-        self._post(
-            duel, force=True, phase="materializing", message="materializing the demonstrations"
-        )
+        # ---- one step at a time, each spread over the slots: every demonstration, then the
+        # king's units, then the challenger's
         duel.prompts = Materialized(root=duel.run_dir / "prompts", prompts={}, done=False)
         cards = self.cards if self.cards is not None else gpus()
         slots = Slots(self.workers, cards, duel.run_dir / "slots")
         log.info("duel %s runs on %d slot(s): %s", duel.event_id[:16], len(slots), cards)
         abort = threading.Event()
         try:
-            with ThreadPoolExecutor(max_workers=3, thread_name_prefix="duel") as phases:
-                jobs = [phases.submit(self._materialize, duel, slots, abort)]
-                jobs += [
-                    phases.submit(self._evaluate, duel, side, slots, abort) for side, _ in sides
-                ]
-                try:
-                    wait(jobs, return_when=FIRST_EXCEPTION)
-                    for job in jobs:
-                        if job.done() and job.exception() is not None:
-                            job.result()
-                    for job in jobs:
-                        job.result()
-                except BaseException:
-                    # An interrupt, or one phase failing: end what the slots run - none of it is
-                    # recorded - so the other phases stop too, and the duel resumes from here.
-                    abort.set()
-                    duel.prompts.finish(failed=True)
-                    RUNNING.stop()
-                    slots.close()
-                    raise
+            self._post(
+                duel,
+                force=True,
+                phase="materializing",
+                side=None,
+                message="making the demonstrations",
+            )
+            self._materialize(duel, slots, abort)
+            duel.prompts.finish()
+            for side in EVALUATION_ORDER:
+                if side not in dict(sides):
+                    continue
+                self._post(
+                    duel,
+                    force=True,
+                    phase="evaluating",
+                    side=side,
+                    message=f"evaluating the {side}",
+                )
+                self._evaluate(duel, side, slots, abort)
+        except BaseException:
+            # An interrupt, or a step failing: end what the slots run - none of it is recorded -
+            # and the duel resumes from here.
+            abort.set()
+            duel.prompts.finish(failed=True)
+            RUNNING.stop()
+            slots.close()
+            raise
         finally:
             slots.close()
             RUNNING.resume()
