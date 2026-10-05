@@ -5,7 +5,7 @@ of the `vector_v1.1` architecture: no code, no pickle. The runtime checks the he
 architecture, builds the network with its own code, loads the weights, and serves the policy over
 `vector-protocol`.
 
-`vector_v1.1` is a Vector policy for two Franka arms: CLIP ViT-B/16 encoder, 6-layer
+`vector_v1.1` is a demonstration-prompted policy for two Franka arms: CLIP ViT-B/16 encoder, 6-layer
 prompt decoder, 1-D diffusion U-Net; 753 tensors, 781M parameters
 (`src/vector_runtime/vector_v1.1.json`).
 
@@ -19,7 +19,7 @@ pip install "robotensor-vector-runtime[model]" robotensor-vector-protocol   # lo
 ## Usage
 
 ```bash
-vector-runtime check   --weights DIR_OR_FILE   # prints weights_sha256
+vector-runtime check --weights DIR_OR_FILE   # prints weights_sha256
 ```
 
 To serve, point a `policy.yaml` at `VectorPolicy`:

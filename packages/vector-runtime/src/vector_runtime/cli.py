@@ -1,6 +1,6 @@
 """`vector-runtime check`: prints one JSON report and exits 0 when it passed.
 
-vector-runtime check   --weights DIR_OR_FILE [--max-bytes N] [--no-hash]
+vector-runtime check --weights DIR_OR_FILE [--max-bytes N] [--no-hash]
 """
 
 from __future__ import annotations
@@ -20,10 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--no-hash", action="store_true")
     args = parser.parse_args(argv)
     try:
-        if args.command == "check":
-            report = check(
-                args.weights, max_file_bytes=args.max_bytes, compute_sha256=not args.no_hash
-            )
+        report = check(args.weights, max_file_bytes=args.max_bytes, compute_sha256=not args.no_hash)
     except (OSError, ValueError) as exc:
         print(json.dumps({"ok": False, "errors": [str(exc)]}, indent=1))
         return 1

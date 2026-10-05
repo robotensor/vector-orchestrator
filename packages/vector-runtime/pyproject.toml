@@ -16,6 +16,7 @@ dependencies = []
 Repository = "https://github.com/robotensor/vector-orchestrator"
 
 [project.optional-dependencies]
+# Loading and serving the network.
 model = [
   "numpy>=1.23,<2",
   "torch==2.8.0",
@@ -44,4 +45,5 @@ addopts = "--import-mode=importlib"
 # importlib mode puts no test directory on sys.path; the tests share helpers from one module.
 pythonpath = ["tests"]
 markers = [
+  "gpu: needs torch, a CUDA device and VECTOR_WEIGHTS (a model.safetensors)",
 ]
