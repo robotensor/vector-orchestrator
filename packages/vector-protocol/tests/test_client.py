@@ -50,7 +50,7 @@ def test_the_replay_example_gets_the_demonstrations_next_action_back_end_to_end(
     address = free_tcp_address() if transport == "tcp" else None
     server = serve(examples / "replay_policy" / "policy.yaml", address=address)
     arrays, info = demonstration
-    actions = arrays["actions"]
+    actions = arrays["qpos"][1:]
     with remote(server) as policy:
         hello = policy.hello()
         assert hello == {

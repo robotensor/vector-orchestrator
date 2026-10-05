@@ -47,7 +47,7 @@ vector-orchestrator store mirror --root store/ --repo owner/results
 ## Store format
 
 ```
-manifest.json              schema and spec version
+manifest.json              store layout version
 head.json                  current seq, block and king
 queue.json                 validator queue
 running.json               the duel running now and how far it has got

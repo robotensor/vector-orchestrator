@@ -1,6 +1,6 @@
 """The append-only result store, as it is mirrored to Hugging Face:
 
-    manifest.json              {schema, spec_version}
+    manifest.json              {schema}: the layout's version; each event names its own spec
     head.json                  {seq, block, king}: a cache of the index
     queue.json                 the queue, as the dashboard shows it
     running.json               the duel running now, as far as it has got (`progress.py`)
@@ -139,7 +139,7 @@ class Store:
 
     # ---------------------------------------------------------------- manifest
     def init(self) -> dict[str, Any]:
-        manifest = {"schema": SCHEMA, "spec_version": self.spec.version}
+        manifest = {"schema": SCHEMA}
         atomic_write_json(self.root / "manifest.json", manifest)
         self._touch(self.root / "manifest.json")
         if not self.head_path().exists():
