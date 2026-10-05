@@ -54,6 +54,12 @@ returns it.
   the crown would hand it back to him.
 - A published duel moves the crown iff `score.crown_moves`.
 
+**Vacate.** A king whose submission is gone (its repository deleted or made private) is taken off
+the throne without a duel: `vacate` publishes an event of kind `vacate` naming it in the record's
+`king` slot, with no challenger, no scores and `dethroned` set. The throne is then empty, and the
+next challenger takes it by genesis. The caller decides that the submission is gone; nothing here
+asks the Hub.
+
 **Genesis.** With no king yet, the first challenger is crowned by an event of kind `genesis`: its side is materialized and evaluated like any other,
 and published with its own scores in the record's `king` slot, which is where a genesis names what
 it crowns. A genesis is void on the same rule as a duel.
@@ -92,6 +98,8 @@ FAILED_FILE = "failed.txt"
 #: The king's refusal, recorded once: a resumed duel keeps the forfeit rather than asking again.
 FORFEIT_FILE = "forfeit.json"
 SIDES = ("challenger", "king")
+#: The kind of the event that takes the crown from a king whose submission is gone.
+VACATE = "vacate"
 #: The order the sides play a duel's units in, once every demonstration is made: the king's run
 #: first, so a challenger is measured against a finished one.
 EVALUATION_ORDER = ("king", "challenger")
@@ -394,6 +402,60 @@ class Orchestrator:
                 outcome={"status": "stale", "reason": reason},
             )
         raise CrownMoved(req, reason, moved)
+
+    # -- the throne -------------------------------------------------------------------------
+
+    def vacate(self, king: SubmissionRef, *, block: int, reason: str) -> dict[str, Any]:
+        """Take the crown from `king`, whose submission is gone, and publish that as an event of
+        kind `vacate`; its index record. Run again for the same king and block, it returns the
+        record already published. `CrownMoved`-free: a head that no longer names `king` raises
+        `ValueError`, since nothing then holds the crown it would take."""
+        eid = event_id(VACATE, block, king.key)
+        existing = self._published(eid)
+        if existing is not None:
+            return existing
+        head = self.store.head() or {}
+        if head.get("king") != king.as_dict():
+            holder = (head.get("king") or {}).get("repo") or "nobody"
+            raise ValueError(f"{king.entry} does not hold the crown ({holder} does)")
+        finished_at = now_iso()
+        record = index_record(
+            event_id=eid,
+            kind=VACATE,
+            block=block,
+            finished_at=finished_at,
+            king=king.as_dict(),
+            challenger=None,
+            king_score=None,
+            challenger_score=None,
+            dethroned=True,
+            units=[],
+        )
+        # The same keys as a duel's event: nothing was played, so no duel, seed, scores or units.
+        event = {
+            "event_id": eid,
+            "duel_id": None,
+            "kind": VACATE,
+            "block": block,
+            "seed": None,
+            "spec_version": self.spec.version,
+            "runs_per_task": 0,
+            "started_at": finished_at,
+            "finished_at": finished_at,
+            "king": king.as_dict(),
+            "challenger": None,
+            "scores": {"king": None, "challenger": None},
+            "dethroned": True,
+            "verdict": {"reason": reason},
+            "benchmark": {},
+            "notes": [f"king vacated: {reason}"],
+            "units": [],
+        }
+        self.store.write_event(event)
+        record["seq"] = self.store.append(record)
+        self.push_touched()
+        log.warning("the crown is taken from %s: %s", king.entry, reason)
+        return record
 
     # -- the duel ---------------------------------------------------------------------------
 

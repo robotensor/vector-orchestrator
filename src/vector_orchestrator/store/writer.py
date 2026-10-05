@@ -5,7 +5,8 @@
     queue.json                 the queue, as the dashboard shows it
     running.json               the duel running now, as far as it has got (`progress.py`)
     champions.json             the models the lane pays now, as the validator computes them
-    index-NNNN.jsonl           one canonical JSON record per published duel
+    index-NNNN.jsonl           one canonical JSON record per published event: a `genesis`, a
+                               `duel`, or a `vacate` (a king whose submission is gone, dethroned)
     events/<event_id>.json     a duel's units and scores
     media/<sha[:2]>/<sha>.mp4  clips
 
@@ -44,11 +45,13 @@ log = logging.getLogger(__name__)
 
 def king_after(record: dict[str, Any], previous: dict | None) -> dict | None:
     """Who holds the crown after `record`: a genesis crowns its entrant (its `king`), a duel keeps
-    its king unless the challenger dethroned it."""
+    its king unless the challenger dethroned it, and a vacate leaves the throne empty."""
     if record.get("kind") == "genesis":
         return record.get("king")
     if record.get("kind") == "duel":
         return record.get("challenger") if record.get("dethroned") else record.get("king")
+    if record.get("kind") == "vacate":
+        return None
     return previous
 
 

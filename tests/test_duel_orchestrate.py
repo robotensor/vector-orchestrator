@@ -496,6 +496,37 @@ def test_a_refused_king_forfeits_every_unit_and_the_duel_is_published(
     verified(store, duel_spec)
 
 
+def test_a_king_whose_submission_is_gone_is_vacated_and_the_next_challenger_takes_it_by_genesis(
+    duel_spec, store, tmp_path
+):
+    crowned(store, duel_spec, GONE_REF)
+    orch = orchestrator(duel_spec, store, tmp_path)
+
+    record = orch.vacate(GONE_REF, block=2, reason="its repository is gone")
+
+    assert record["kind"] == "vacate" and record["dethroned"] is True
+    assert record["king"] == GONE_REF.as_dict() and record["challenger"] is None
+    assert record["king_score"] is None and record["challenger_score"] is None
+    assert store.head()["king"] is None
+    assert event_of(store, record)["notes"] == ["king vacated: its repository is gone"]
+    verified(store, duel_spec)
+    # Asked again, the same vacate is the one already published.
+    assert orch.vacate(GONE_REF, block=2, reason="again") == record
+    assert len(store.iter_index()) == 2
+
+    result = orch.run(DuelRequest(ZERO_REF, None, block=3))
+    assert result.published and result.kind == "genesis"
+    assert store.head()["king"] == ZERO_REF.as_dict()
+    verified(store, duel_spec)
+
+
+def test_only_the_king_can_be_vacated(duel_spec, store, tmp_path):
+    crowned(store, duel_spec, ZERO_REF)
+    with pytest.raises(ValueError, match="does not hold the crown"):
+        orchestrator(duel_spec, store, tmp_path).vacate(GONE_REF, block=2, reason="gone")
+    assert store.head()["king"] == ZERO_REF.as_dict()
+
+
 def test_a_resumed_duel_keeps_the_kings_forfeit(duel_spec, store, tmp_path):
     crowned(store, duel_spec, GONE_REF)
     (tmp_path / "gone").mkdir()
