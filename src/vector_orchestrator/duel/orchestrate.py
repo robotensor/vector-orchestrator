@@ -707,7 +707,7 @@ class Orchestrator:
             verdict: dict[str, Any] = {"reason": reason}
         else:
             units = duel.units
-            result = score.verdict(units, spec.margin, spec.tasks, spec.alpha)
+            result = score.verdict(units, spec.margin, spec.tasks)
             king_scores, challenger_scores = result.king_scores, result.challenger_scores
             dethroned, reason = result.dethroned, result.reason
             king, challenger = req.king, req.challenger

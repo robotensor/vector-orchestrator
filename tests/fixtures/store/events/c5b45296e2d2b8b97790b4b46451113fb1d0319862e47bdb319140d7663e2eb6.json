@@ -618,7 +618,6 @@
   ],
   "verdict": {
     "delta_points": 65.625,
-    "p_value": 4.76837158203125e-07,
     "reason": "margin-met",
     "void_fraction": 0.03125
   }

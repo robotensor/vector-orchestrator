@@ -7,7 +7,7 @@ tasks          the tasks, each scored on its own
 runs_per_task  units per task and side in a duel
 step_ratio     a rollout stops after this many times the expert's steps in its scene (or at the
                task's own step limit): lower it as models get faster
-crown          margin (points), alpha (sign test), max_void (fraction of units)
+crown          margin (points), max_void (fraction of units)
 model          the architecture submissions hold, and the digest of its tensor manifest
 budgets        seconds: policy_start, act, materialize, unit, policy, duel, stall;
                and stall_retries
@@ -68,7 +68,6 @@ def validate_spec(doc: Any) -> list[str]:
     need("step_ratio > 0", _positive(doc.get("step_ratio")))
     crown = doc.get("crown") if isinstance(doc.get("crown"), dict) else {}
     need("crown.margin in [0, 100]", _positive(crown.get("margin")) or crown.get("margin") == 0)
-    need("crown.alpha in (0, 1)", _positive(crown.get("alpha")) and crown["alpha"] < 1)
     need(
         "crown.max_void in [0, 1]",
         isinstance(crown.get("max_void"), (int, float)) and 0 <= crown["max_void"] <= 1,
@@ -130,10 +129,6 @@ class Spec:
     def margin(self) -> float:
         """The crown's margin in percentage points."""
         return float(self.raw["crown"]["margin"])
-
-    @property
-    def alpha(self) -> float:
-        return float(self.raw["crown"]["alpha"])
 
     @property
     def max_void(self) -> float:

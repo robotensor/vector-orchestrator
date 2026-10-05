@@ -114,7 +114,7 @@ def build(out: Path) -> Path:
             king_steps=unit["scene_seed"] % 300 + 100,
             challenger_steps=120 + n,
         )
-    verdict = score.verdict(units, spec.margin, spec.tasks, spec.alpha)
+    verdict = score.verdict(units, spec.margin, spec.tasks)
     record = index_record(
         event_id=event_id("duel", 2, did),
         kind="duel",

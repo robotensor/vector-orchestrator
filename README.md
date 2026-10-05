@@ -23,8 +23,8 @@ drives it; `vector-orchestrator duel` runs one by hand.
 - **Submissions.** A Hugging Face repo with `model.safetensors` only. The weights are checked
   against the architecture and served by the validator's own code; no submitted code runs.
 - **Scoring.** A side's score is its mean success rate over tasks, counting non-void units only.
-  The challenger is crowned when it leads by `crown.margin` and passes a one-sided sign test at
-  `crown.alpha`. A duel with more than `crown.max_void` void units is void.
+  The challenger is crowned when its average leads the king's by `crown.margin` points. A duel with
+  more than `crown.max_void` void units is void.
 - **Hardware.** Uses every visible GPU, `--workers` units per card. Interrupted duels resume from
   `runs/<event id>/`.
 

@@ -27,7 +27,6 @@
   "step_ratio": 2,
   "crown": {
     "margin": 3.0,
-    "alpha": 0.05,
     "max_void": 0.2
   },
   "model": {

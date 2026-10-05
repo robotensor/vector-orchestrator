@@ -19,13 +19,12 @@ REPLAY_AT = REPLAY_REF.entry
 
 @pytest.fixture
 def cli_spec(spec_doc, write_spec):
-    """Three tasks, one run each, and an alpha three straight wins can clear."""
+    """Three tasks, one run each."""
     doc = {
         **spec_doc,
         "tasks": ["place_cube_plate", "stack_two_blocks", "press_button"],
         "runs_per_task": 1,
     }
-    doc["crown"] = {**doc["crown"], "alpha": 0.2}
     doc["budgets"] = {**doc["budgets"], "act": 2.0}
     return write_spec(doc, name="cli.json")
 

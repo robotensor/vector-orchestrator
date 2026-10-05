@@ -4,13 +4,11 @@
   unit has none. Its score (`average`) is the mean of the rates it has.
 - A unit void for either side is void for both. A duel with more than `max_void` of its units void
   is void and moves nothing.
-- The challenger takes the crown iff its average is at least the king's plus `margin` points, and
-  its wins over the discordant units pass a one-sided sign test at `alpha`.
+- The challenger takes the crown iff its average is at least the king's plus `margin` points.
 """
 
 from __future__ import annotations
 
-import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -69,15 +67,6 @@ def crown_moves(
     return challenger_average >= king_average + margin_points / 100.0 - SCORE_EPSILON
 
 
-def sign_test_p(wins: int, losses: int) -> float:
-    """One-sided exact sign test: the chance of `wins` or more challenger-only successes among the
-    `wins + losses` discordant units if neither side were better (each 1/2). 1.0 with none."""
-    n = wins + losses
-    if n <= 0:
-        return 1.0
-    return sum(math.comb(n, k) for k in range(wins, n + 1)) / 2.0**n
-
-
 def void_fraction(units: Iterable[dict[str, Any]]) -> float:
     units = list(units)
     return sum(1 for u in units if u.get("void")) / len(units) if units else 0.0
@@ -129,9 +118,6 @@ class Verdict:
     reason: str
     void_fraction: float = 0.0
     tally: Tally = field(default_factory=Tally)
-    #: The sign test's alpha when one is given, and its p-value over the discordant units.
-    paired_alpha: float | None = None
-    paired_p_value: float | None = None
 
     @property
     def delta_points(self) -> float | None:
@@ -143,35 +129,21 @@ class Verdict:
         return {
             "reason": self.reason,
             "delta_points": self.delta_points,
-            "p_value": self.paired_p_value,
         }
 
 
-def verdict(
-    units: Iterable[dict[str, Any]],
-    score_margin: float,
-    tasks: Sequence[str],
-    paired_alpha: float | None = None,
-) -> Verdict:
-    """The duel's scores and whether the crown moves. Void units are excluded from both sides.
-
-    With `paired_alpha`, a met margin moves the crown only when `sign_test_p` over the paired
-    units is at most `paired_alpha`; the reason is then `not-significant` when it is not."""
+def verdict(units: Iterable[dict[str, Any]], score_margin: float, tasks: Sequence[str]) -> Verdict:
+    """The duel's scores and whether the crown moves. Void units are excluded from both sides."""
     units = list(units)
     king = task_scores(units, "king", tasks)
     challenger = task_scores(units, "challenger", tasks)
     moves = crown_moves(king["average"], challenger["average"], score_margin)
-    paired = tally(units)
-    p_value = sign_test_p(paired.wins, paired.losses) if paired_alpha is not None else None
     if not units:
         reason = "no-units"
     elif king["average"] is None or challenger["average"] is None:
         reason = "unscored"
     elif not moves:
         reason = "short-of-margin"
-    elif p_value is not None and p_value > paired_alpha + SCORE_EPSILON:
-        moves = False
-        reason = "not-significant"
     else:
         reason = "margin-met"
     return Verdict(
@@ -181,7 +153,5 @@ def verdict(
         moves,
         reason,
         void_fraction(units),
-        paired,
-        paired_alpha=paired_alpha,
-        paired_p_value=p_value,
+        tally(units),
     )

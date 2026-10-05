@@ -45,8 +45,6 @@ def three_units(spec_doc, **budgets):
         "tasks": ["place_cube_plate", "stack_two_blocks", "press_button"],
         "runs_per_task": 1,
     }
-    # Three straight wins give a sign-test p of 0.125: an alpha that lets three units decide.
-    doc["crown"] = {**doc["crown"], "alpha": 0.2}
     doc["budgets"] = {**doc["budgets"], "act": 2.0, **budgets}
     return doc
 
@@ -138,7 +136,7 @@ def test_the_replay_challenger_dethrones_the_zero_king_on_identical_prompts(
     assert event["benchmark"] == {"commit": "fake", "source_sha256": "fake"}
     for side, ref in (("challenger", REPLAY_REF), ("king", ZERO_REF)):
         assert event[side] == {**ref.as_dict(), "weights_sha256": None, "refused": None}
-    assert event["verdict"]["reason"] == "margin-met" and event["verdict"]["p_value"] < 1
+    assert event["verdict"]["reason"] == "margin-met" and "p_value" not in event["verdict"]
     assert set(event["scores"]["king"]) == {"average", *duel_spec.tasks}
     verified(store, duel_spec)
 
@@ -278,7 +276,7 @@ def test_a_unit_void_on_one_side_is_void_for_both_and_a_duel_within_the_limit_st
     spec_doc, write_spec, store, tmp_path
 ):
     doc = three_units(spec_doc)
-    doc["crown"].update(max_void=0.5, alpha=0.3)  # two decisive units: p = 0.25
+    doc["crown"].update(max_void=0.5)
     spec = write_spec(doc, name="lenient.json")
     store.spec = spec
     crowned(store, spec, ZERO_REF)
