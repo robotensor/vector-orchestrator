@@ -1,8 +1,10 @@
 """The append-only result store, as it is mirrored to Hugging Face:
 
-    manifest.json              {schema, spec_version}
+    manifest.json              {schema}: the layout's version; each event names its own spec
     head.json                  {seq, block, king}: a cache of the index
     queue.json                 the queue, as the dashboard shows it
+    running.json               the duel running now, as far as it has got (`progress.py`)
+    champions.json             the models the lane pays now, as the validator computes them
     index-NNNN.jsonl           one canonical JSON record per published duel
     events/<event_id>.json     a duel's units and scores
     media/<sha[:2]>/<sha>.mp4  clips
@@ -115,6 +117,12 @@ class Store:
     def queue_path(self) -> Path:
         return self.root / "queue.json"
 
+    def running_path(self) -> Path:
+        return self.root / "running.json"
+
+    def champions_path(self) -> Path:
+        return self.root / "champions.json"
+
     def event_path(self, event_id: str) -> Path:
         return self.root / "events" / f"{event_id}.json"
 
@@ -131,7 +139,7 @@ class Store:
 
     # ---------------------------------------------------------------- manifest
     def init(self) -> dict[str, Any]:
-        manifest = {"schema": SCHEMA, "spec_version": self.spec.version}
+        manifest = {"schema": SCHEMA}
         atomic_write_json(self.root / "manifest.json", manifest)
         self._touch(self.root / "manifest.json")
         if not self.head_path().exists():
@@ -288,7 +296,7 @@ class Store:
         out.sort(key=lambda r: r.get("seq", 0))
         return out
 
-    # ---------------------------------------------------------------- events / queue / media
+    # ---------------------------------------------------------------- events / queue / boards / media
     def write_event(self, event: dict[str, Any]) -> Path:
         path = self.event_path(str(event["event_id"]))
         atomic_write_json(path, event)
@@ -301,6 +309,14 @@ class Store:
     def write_queue(self, snapshot: dict[str, Any]) -> None:
         atomic_write_json(self.queue_path(), snapshot)
         self._touch(self.queue_path())
+
+    def write_running(self, doc: dict[str, Any]) -> None:
+        atomic_write_json(self.running_path(), doc)
+        self._touch(self.running_path())
+
+    def write_champions(self, doc: dict[str, Any]) -> None:
+        atomic_write_json(self.champions_path(), doc)
+        self._touch(self.champions_path())
 
     def put_media(self, src: str | Path) -> str:
         src = Path(src)

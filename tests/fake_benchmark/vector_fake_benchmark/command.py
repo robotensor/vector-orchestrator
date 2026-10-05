@@ -4,8 +4,9 @@ Run as a script, never imported by the plugin. It imports `vector_fake_simulator
 real command half imports SAPIEN, so the "simulator" is loaded here and only here.
 
 `materialize` writes a prompt shaped like RoboTwin's: named arrays (`frames_head_camera`, `qpos`,
-`actions`, ...) and a privileged `meta` array (the task and the scene seed as JSON bytes) that
-never reaches a policy. The actions are a function of the scene seed. Given several `--scene-seed`
+...) and a privileged `meta` array (the task and the scene seed as JSON bytes) that never reaches
+a policy. The joint positions are a function of the scene seed, and the actions are `qpos[1:]`,
+as a position-controlled expert's are. Given several `--scene-seed`
 candidates, its "expert" builds on the first, or rejects it and builds on the second under
 `--behaviour reject_first`; its result names the seed it built on, as RoboTwin's does.
 
@@ -103,7 +104,6 @@ def materialize(args: argparse.Namespace) -> int:
     arrays = {
         "frames_head_camera": rng.integers(0, 255, (STEPS, 4, 4, 3), dtype=np.uint8),
         "qpos": rng.standard_normal((STEPS, ACTION_DIM)),
-        "actions": rng.standard_normal((STEPS - 1, ACTION_DIM)),
         "frequency": np.array(10.0),
         "meta": np.frombuffer(json.dumps(meta, sort_keys=True).encode(), dtype=np.uint8),
     }
@@ -214,7 +214,7 @@ def drive_policy(args: argparse.Namespace) -> dict:
     with np.load(args.prompt) as data:
         arrays = {name: data[name] for name in data.files}
     meta = json.loads(bytes(arrays.pop("meta")).decode())  # privileged: stays on this side
-    demonstrated = arrays["actions"]
+    demonstrated = arrays["qpos"][1:]
     taken: list = []
     error = cause = None
     try:

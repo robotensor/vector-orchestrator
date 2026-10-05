@@ -100,7 +100,7 @@ def check_store(root: str | Path, spec) -> Checked:
     store = Store(root, spec)
     out = Checked()
     manifest = store.manifest()
-    if manifest != {"schema": SCHEMA, "spec_version": spec.version}:
+    if manifest != {"schema": SCHEMA}:
         out.errors.append(f"manifest.json is {manifest}")
     seq, last, king = 0, None, None
     for part in store.index_parts():

@@ -20,7 +20,8 @@ EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 def robotwin_demonstration(steps: int = 6, dims: int = 16, cameras=("head", "left_wrist")):
     """A prompt shaped like RoboTwin's, minus `meta`, which never reaches a policy.
 
-    Dual Franka: `qpos` and `endpose` are 16-D, and there is one action fewer than frames.
+    Dual Franka: `qpos` and `endpose` are 16-D. There is no `actions` array: the expert's actions
+    are `qpos[1:]`.
     """
     rng = np.random.default_rng(7)
     arrays = {
@@ -29,7 +30,6 @@ def robotwin_demonstration(steps: int = 6, dims: int = 16, cameras=("head", "lef
     arrays.update(
         qpos=rng.standard_normal((steps, dims)),
         endpose=rng.standard_normal((steps, 16)),
-        actions=rng.standard_normal((steps - 1, dims)),
         times=np.arange(steps, dtype=np.float64) / 15.0,
         frequency=np.array(15.0),
     )

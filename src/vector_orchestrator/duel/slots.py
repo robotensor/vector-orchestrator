@@ -7,8 +7,9 @@ its memory. Slot i is on card i mod n, so the first n slots are on n different c
 with fewer jobs than slots spreads over the cards.
 
 A job asks for a slot with a priority - a unit's play (`PLAY`) before a new demonstration
-(`MAKE`), so the units already begun finish first and both sides' results come in pairs - and
-gets the lowest free slot, preferring one whose kept policy server serves its submission. Its
+(`MAKE`), which matters only where both are asked for at once; a duel runs its steps one after
+another - and gets the lowest free slot, preferring one whose kept policy server serves its
+submission. Its
 subprocesses see the slot's card as their only device (`Slot.env`), so a policy's `cuda:0` is that
 card.
 """

@@ -19,7 +19,7 @@ def test_the_shipped_spec_is_the_competition(spec):
     assert spec.version >= 1 and spec.level == 1
     assert len(spec.tasks) == 16 and len(set(spec.tasks)) == 16
     assert spec.runs_per_task == 10 and spec.step_ratio == 2
-    assert (spec.margin, spec.alpha, spec.max_void) == (3.0, 0.05, 0.2)
+    assert (spec.margin, spec.max_void) == (3.0, 0.2)
     assert spec.benchmark == {"repo": "robotensor/RoboTwin-Vector", "branch": "vector"}
     assert set(spec.raw) == {
         "version",
@@ -51,7 +51,6 @@ def test_the_spec_pins_the_runtime_this_checkout_holds(spec):
         (lambda d: d.update(runs_per_task=0), "runs_per_task"),
         (lambda d: d.update(step_ratio=0), "step_ratio"),
         (lambda d: d.pop("step_ratio"), "step_ratio"),
-        (lambda d: d["crown"].update(alpha=1.5), "crown.alpha"),
         (lambda d: d["crown"].update(max_void=2), "crown.max_void"),
         (lambda d: d["model"].update(tensors_sha256="x"), "model.tensors_sha256"),
         (lambda d: d["budgets"].pop("act"), "budgets.act"),

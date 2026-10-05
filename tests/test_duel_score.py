@@ -96,13 +96,16 @@ def test_an_unscored_duel_does_not_move_the_crown():
     assert verdict([], 3.0, TASKS).reason == "no-units"
 
 
-def test_the_sign_test_holds_back_a_margin_met_on_a_few_units():
+def test_the_rates_alone_decide_however_few_units_differ():
+    """One unit of ten is enough when it carries the average past the margin."""
     units = [
         unit("place_cube_plate", False, True, i=0),
         *(unit("place_cube_plate", True, True, i=n) for n in range(1, 10)),
     ]
-    assert verdict(units, 3.0, TASKS[:1]).dethroned
-    held = verdict(units, 3.0, TASKS[:1], paired_alpha=0.05)
-    assert (
-        not held.dethroned and held.reason == "not-significant" and held.as_dict()["p_value"] == 0.5
-    )
+    won = verdict(units, 3.0, TASKS[:1])
+    assert won.dethroned and won.reason == "margin-met"
+    assert won.as_dict()["reason"] == "margin-met" and set(won.as_dict()) == {
+        "reason",
+        "delta_points",
+    }
+    assert round(won.delta_points, 6) == 10.0

@@ -415,7 +415,7 @@ def slow_policy(root: Path, act_s: float) -> Path:
         "class Policy:\n"
         "    action_type = 'qpos'\n\n"
         "    def set_demonstration(self, arrays, info):\n"
-        "        self.actions = np.array(arrays['actions'], dtype=np.float64)\n\n"
+        "        self.actions = np.array(arrays['qpos'][1:], dtype=np.float64)\n\n"
         "    def reset(self, seed):\n"
         "        self.k = 0\n\n"
         "    def act(self, observation):\n"

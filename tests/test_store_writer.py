@@ -17,7 +17,7 @@ CHALLENGER = SubmissionRef.make("org/challenger", "b" * 40)
 
 def test_the_layout_the_dashboard_reads(spec, tmp_path):
     store = Store(tmp_path / "store", spec)
-    assert store.init() == {"schema": SCHEMA, "spec_version": spec.version}
+    assert store.init() == {"schema": SCHEMA}
     head = json.loads((tmp_path / "store" / "head.json").read_text())
     assert head == {"seq": 0, "block": 0, "king": None}
 

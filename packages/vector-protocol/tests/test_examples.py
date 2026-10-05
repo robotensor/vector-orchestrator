@@ -38,7 +38,7 @@ def test_replay_returns_the_kth_demonstration_action_after_reset_then_the_last(
     assert policy.action_type == "qpos"
     policy.set_demonstration(arrays, info)
     policy.reset(0)
-    actions = arrays["actions"]
+    actions = arrays["qpos"][1:]
     for k in range(len(actions) + 3):
         got = policy.act(observe(arrays, min(k, len(actions))))
         np.testing.assert_array_equal(got["action"], actions[min(k, len(actions) - 1)])
@@ -46,16 +46,16 @@ def test_replay_returns_the_kth_demonstration_action_after_reset_then_the_last(
     np.testing.assert_array_equal(policy.act(observe(arrays))["action"], actions[0])
 
 
-def test_replay_refuses_a_demonstration_without_actions_and_acting_before_one(
+def test_replay_refuses_a_demonstration_without_joint_positions_and_acting_before_one(
     examples, monkeypatch
 ):
     policy = build(examples, "replay_policy", monkeypatch)
     with pytest.raises(RuntimeError, match="before set_demonstration"):
         policy.act({})
-    with pytest.raises(ValueError, match="no 'actions'"):
-        policy.set_demonstration({"qpos": np.zeros((3, 16))}, {})
-    with pytest.raises(ValueError, match="non-empty"):
-        policy.set_demonstration({"actions": np.zeros((0, 16))}, {})
+    with pytest.raises(ValueError, match="no 'qpos'"):
+        policy.set_demonstration({"endpose": np.zeros((3, 16))}, {})
+    with pytest.raises(ValueError, match="at least two frames"):
+        policy.set_demonstration({"qpos": np.zeros((1, 16))}, {})
 
 
 def test_zero_returns_zeros_shaped_like_an_action_row(
@@ -68,6 +68,6 @@ def test_zero_returns_zeros_shaped_like_an_action_row(
     policy.reset(0)
     for t in range(3):
         action = policy.act(observe(arrays, t))["action"]
-        assert action.shape == arrays["actions"].shape[1:] == (16,)
-        assert action.dtype == arrays["actions"].dtype
+        assert action.shape == arrays["qpos"].shape[1:] == (16,)
+        assert action.dtype == arrays["qpos"].dtype
         assert not action.any()

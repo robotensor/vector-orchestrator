@@ -54,7 +54,7 @@ def test_the_replay_example_answers_hello_prompt_reset_act_with_the_next_action(
     )
     assert call(conn, "prompt", {"info": info}, arrays)[0] == "ok"
     assert call(conn, "reset", {"seed": 3})[0] == "ok"
-    actions = arrays["actions"]
+    actions = arrays["qpos"][1:]
     for k in range(len(actions) + 2):
         op, _, reply = call(conn, "act", {}, observation(arrays, min(k, len(actions))))
         assert op == "action"

@@ -88,12 +88,6 @@ def test_a_smaller_duels_units_are_the_first_of_a_larger_one_and_scenes_never_re
 # -- the crown rule --------------------------------------------------------------------------
 
 
-def test_the_sign_test():
-    assert score.sign_test_p(0, 0) == 1.0
-    assert score.sign_test_p(5, 0) == pytest.approx(1 / 32)
-    assert score.sign_test_p(3, 3) == pytest.approx(42 / 64)
-
-
 def units(pairs):
     """Rows of (challenger_success, king_success), all of one task."""
     return [
@@ -103,9 +97,9 @@ def units(pairs):
 
 def test_a_clear_win_moves_the_crown():
     rows = units([(True, False)] * 8 + [(True, True)] * 2 + [(False, False)] * 6)
-    v = score.verdict(rows, 3.0, ["t"], paired_alpha=0.05)
+    v = score.verdict(rows, 3.0, ["t"])
     assert v.dethroned and v.reason == "margin-met"
-    assert v.paired_p_value == pytest.approx(1 / 256)
+    assert v.delta_points == pytest.approx(50.0)
 
 
 # -- the weights runtime ---------------------------------------------------------------------

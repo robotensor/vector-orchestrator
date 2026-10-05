@@ -82,7 +82,7 @@ def test_every_unit_gets_a_verified_prompt_and_its_hash(fake_spec, fake, units, 
         assert not prompt.void, prompt.error
         assert prompt.path == tmp_path / unit["unit_id"] / "prompt.npz"
         assert prompt.sha256 == sha256_file(prompt.path)
-        assert prompt.demo_sha256 == sha256_file(prompt.demo_clip)
+        assert prompt.demo_clip is not None and prompt.demo_clip.is_file()
         assert prompt.path.stat().st_mode & 0o222 == 0, "a side's benchmark could rewrite it"
     assert out.void == 0
 

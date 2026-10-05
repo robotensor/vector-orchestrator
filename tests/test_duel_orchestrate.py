@@ -13,7 +13,7 @@ from duel_helpers import (
     ZERO_REF,
     Crash,
     FakePolicyRuntime,
-    RecordingReporter,
+    RecordingBoard,
     harness_voiding,
 )
 from store_helpers import check_store, make_record, publish
@@ -28,7 +28,7 @@ from vector_orchestrator.duel.orchestrate import (
 from vector_orchestrator.duel.runtime import RuntimeUnavailable
 from vector_orchestrator.duel.side import read_results
 from vector_orchestrator.ids import SubmissionRef
-from vector_orchestrator.live import PHASES
+from vector_orchestrator.progress import PHASES
 from vector_orchestrator.store.writer import Store
 from vector_orchestrator.units import deal
 
@@ -45,8 +45,6 @@ def three_units(spec_doc, **budgets):
         "tasks": ["place_cube_plate", "stack_two_blocks", "press_button"],
         "runs_per_task": 1,
     }
-    # Three straight wins give a sign-test p of 0.125: an alpha that lets three units decide.
-    doc["crown"] = {**doc["crown"], "alpha": 0.2}
     doc["budgets"] = {**doc["budgets"], "act": 2.0, **budgets}
     return doc
 
@@ -71,7 +69,7 @@ def crowned(store, spec, king: SubmissionRef, block: int = 1) -> None:
 def orchestrator(spec, store, tmp_path, runtime=None, **kwargs):
     import vector_fake_benchmark
 
-    kwargs.setdefault("live", RecordingReporter(spec))
+    kwargs.setdefault("progress", RecordingBoard(store))
     kwargs.setdefault("benchmark", vector_fake_benchmark.FakeBenchmark())
     kwargs.setdefault("cards", [None])  # the same one slot on any host
     return Orchestrator(
@@ -93,8 +91,8 @@ def test_the_replay_challenger_dethrones_the_zero_king_on_identical_prompts(
     duel_spec, store, tmp_path
 ):
     crowned(store, duel_spec, ZERO_REF)
-    live = RecordingReporter(duel_spec)
-    duel = orchestrator(duel_spec, store, tmp_path, live=live)
+    board = RecordingBoard(store)
+    duel = orchestrator(duel_spec, store, tmp_path, progress=board)
     req = DuelRequest(REPLAY_REF, ZERO_REF, block=2)
     result = duel.run(req)
 
@@ -138,11 +136,11 @@ def test_the_replay_challenger_dethrones_the_zero_king_on_identical_prompts(
     assert event["benchmark"] == {"commit": "fake", "source_sha256": "fake"}
     for side, ref in (("challenger", REPLAY_REF), ("king", ZERO_REF)):
         assert event[side] == {**ref.as_dict(), "weights_sha256": None, "refused": None}
-    assert event["verdict"]["reason"] == "margin-met" and event["verdict"]["p_value"] < 1
+    assert event["verdict"]["reason"] == "margin-met" and "p_value" not in event["verdict"]
     assert set(event["scores"]["king"]) == {"average", *duel_spec.tasks}
     verified(store, duel_spec)
 
-    assert live.phases == [
+    assert board.phases == [
         "fetching",
         "checking",
         "materializing",
@@ -150,11 +148,18 @@ def test_the_replay_challenger_dethrones_the_zero_king_on_identical_prompts(
         "publishing",
         "done",
     ]
-    assert [PHASES.index(p) for p in live.phases] == sorted(PHASES.index(p) for p in live.phases)
+    assert [PHASES.index(p) for p in board.phases] == sorted(PHASES.index(p) for p in board.phases)
     # Both sides play each unit as soon as its prompt lands, not one side after the other.
-    sides = [f["side"] for f in live.frames if f["phase"] == "evaluating"]
+    sides = [f["side"] for f in board.docs if f["phase"] == "evaluating"]
     assert set(sides) == {"challenger", "king"}
-    assert live.frames[-1]["units"][0]["challenger_video"], "clips reach the live view"
+    last = board.docs[-1]
+    assert last["progress"] == {"units": 3, "demonstrations": 3, "challenger": 3, "king": 3}
+    assert last["outcome"]["status"] == "published" and last["outcome"]["dethroned"] is True
+    assert last["event_id"] == req.event_id(duel_spec) and last["current"] is None
+    assert json.loads(store.running_path().read_text()) == last, "the store holds the last state"
+    # The units are counted as they finish, never more than there are.
+    made = [d["progress"]["demonstrations"] for d in board.docs]
+    assert made == sorted(made) and max(made) == 3
 
 
 def test_the_zero_challenger_does_not_take_the_replay_kings_crown(duel_spec, store, tmp_path):
@@ -173,9 +178,9 @@ def test_genesis_crowns_the_first_challenger_of_an_empty_track_with_its_own_scor
 ):
     assert store.head()["king"] is None
     runtime = FakePolicyRuntime(duel_spec)
-    live = RecordingReporter(duel_spec)
+    board = RecordingBoard(store)
     req = DuelRequest(ZERO_REF, None, block=1)
-    result = orchestrator(duel_spec, store, tmp_path, runtime, live=live).run(req)
+    result = orchestrator(duel_spec, store, tmp_path, runtime, progress=board).run(req)
     assert result.published and result.kind == "genesis"
     record = result.record
     assert record["king"] == ZERO_REF.as_dict() and record["challenger"] is None
@@ -189,7 +194,7 @@ def test_genesis_crowns_the_first_challenger_of_an_empty_track_with_its_own_scor
     )
     assert all(u["king_video"] and u["prompt_sha256"] for u in event["units"])
     assert event["challenger"] is None and event["king"]["repo"] == ZERO_REF.repo
-    assert "evaluating" in live.phases and live.phases[-1] == "done"
+    assert "evaluating" in board.phases and board.phases[-1] == "done"
     verified(store, duel_spec)
 
 
@@ -245,11 +250,11 @@ def test_a_king_whose_policy_dies_on_every_unit_loses_them_and_the_crown(
 def test_a_duel_with_too_many_units_void_for_the_harness_is_void(duel_spec, store, tmp_path):
     crowned(store, duel_spec, ZERO_REF)
     runtime = FakePolicyRuntime(duel_spec)
-    live = RecordingReporter(duel_spec)
+    board = RecordingBoard(store)
     req = DuelRequest(REPLAY_REF, ZERO_REF, block=2)
     ids = [u["unit_id"] for u in deal(duel_spec, req.duel_id(duel_spec))]
     lost = harness_voiding(set(ids[1:]))
-    duel = orchestrator(duel_spec, store, tmp_path, runtime, live=live, benchmark=lost)
+    duel = orchestrator(duel_spec, store, tmp_path, runtime, progress=board, benchmark=lost)
     result = duel.run(req)
 
     assert result.status == "void" and result.reason == "1 of 3 units are void"
@@ -257,12 +262,15 @@ def test_a_duel_with_too_many_units_void_for_the_harness_is_void(duel_spec, stor
     assert not first["void"] and second["void"] and not third["void"]
     assert "the simulator lost it" in second["challenger_error"]
     assert third["challenger_success"] is None, "a unit was played for a duel already void"
-    assert third["unit_id"] not in {unit for _, unit in runtime.serves}
+    # The king's step ran every unit before the challenger's began; the challenger stopped at
+    # the void that made the duel void.
+    assert (REPLAY_REF.repo, third["unit_id"]) not in runtime.serves
+    assert (ZERO_REF.repo, third["unit_id"]) in runtime.serves
     assert len(store.iter_index()) == 1, "a void duel was published"
     assert store.head()["king"] == ZERO_REF.as_dict()
     outcome = json.loads((duel.run_dir(req) / OUTCOME_FILE).read_text())
     assert outcome["status"] == "void" and outcome["reason"] == result.reason
-    assert live.phases[-1] == "failed" and live.frames[-1]["message"].startswith("void: ")
+    assert board.phases[-1] == "failed" and board.docs[-1]["message"].startswith("void: ")
     assert duel.run(req).status == "void", "a decided duel is decided"
     verified(store, duel_spec)
 
@@ -271,7 +279,7 @@ def test_a_unit_void_on_one_side_is_void_for_both_and_a_duel_within_the_limit_st
     spec_doc, write_spec, store, tmp_path
 ):
     doc = three_units(spec_doc)
-    doc["crown"].update(max_void=0.5, alpha=0.3)  # two decisive units: p = 0.25
+    doc["crown"].update(max_void=0.5)
     spec = write_spec(doc, name="lenient.json")
     store.spec = spec
     crowned(store, spec, ZERO_REF)
@@ -424,16 +432,16 @@ def test_a_duel_is_not_published_against_a_king_crowned_away_while_it_ran(
                 publish(store, duel_spec, record)
             return super().serve(prepared, workdir=workdir, **kw)
 
-    live = RecordingReporter(duel_spec)
+    board = RecordingBoard(store)
     req = DuelRequest(REPLAY_REF, ZERO_REF, block=2)
-    duel = orchestrator(duel_spec, store, tmp_path, Usurped(duel_spec), live=live)
+    duel = orchestrator(duel_spec, store, tmp_path, Usurped(duel_spec), progress=board)
     with pytest.raises(CrownMoved, match="the crown moved from robotensor/vector-zero-policy@"):
         duel.run(req)
     records = store.iter_index()
     assert [(r["kind"], r["block"]) for r in records] == [("genesis", 1), ("duel", 3)]
     assert store.head()["king"] == BOMB_REF.as_dict()
     assert not duel.run_dir(req).exists()
-    assert live.frames[-1]["phase"] == "failed" and live.frames[-1]["message"].startswith("stale: ")
+    assert board.docs[-1]["phase"] == "failed" and board.docs[-1]["message"].startswith("stale: ")
 
 
 def test_a_refused_challenger_is_refused_and_the_king_keeps_the_crown(duel_spec, store, tmp_path):
@@ -442,8 +450,8 @@ def test_a_refused_challenger_is_refused_and_the_king_keeps_the_crown(duel_spec,
     ref = SubmissionRef.make("org/broken", "3" * 40)
     runtime = FakePolicyRuntime(duel_spec, {ref.repo: broken, ZERO_REF.repo: tmp_path})
     req = DuelRequest(ref, ZERO_REF, block=2)
-    live = RecordingReporter(duel_spec)
-    duel = orchestrator(duel_spec, store, tmp_path, runtime, live=live)
+    board = RecordingBoard(store)
+    duel = orchestrator(duel_spec, store, tmp_path, runtime, progress=board)
     result = duel.run(req)
     assert result.status == "refused" and not result.published
     assert result.reason.startswith("the challenger's submission was refused: hello: ")
@@ -453,8 +461,8 @@ def test_a_refused_challenger_is_refused_and_the_king_keeps_the_crown(duel_spec,
     assert store.head()["king"] == ZERO_REF.as_dict() and len(store.iter_index()) == 1
     outcome = json.loads((duel.run_dir(req) / OUTCOME_FILE).read_text())
     assert (outcome["status"], outcome["reason"]) == ("refused", result.reason)
-    assert live.frames[-1]["phase"] == "failed"
-    assert live.frames[-1]["message"].startswith("refused: the challenger's submission")
+    assert board.docs[-1]["phase"] == "failed"
+    assert board.docs[-1]["message"].startswith("refused: the challenger's submission")
 
 
 @pytest.mark.parametrize(
@@ -541,13 +549,13 @@ def test_a_harness_that_cannot_fetch_fails_the_duel_without_deciding_it(duel_spe
             raise RuntimeUnavailable("the Hub is unreachable")
 
     req = DuelRequest(REPLAY_REF, ZERO_REF, block=2)
-    live = RecordingReporter(duel_spec)
-    duel = orchestrator(duel_spec, store, tmp_path, NoHub(duel_spec), live=live)
+    board = RecordingBoard(store)
+    duel = orchestrator(duel_spec, store, tmp_path, NoHub(duel_spec), progress=board)
     with pytest.raises(HarnessUnavailable, match="fetching the challenger: the Hub is unreachable"):
         duel.run(req)
     assert not (duel.run_dir(req) / OUTCOME_FILE).exists()
     assert "the Hub is unreachable" in (duel.run_dir(req) / "failed.txt").read_text()
-    assert live.phases == ["fetching", "failed"]
+    assert board.phases == ["fetching", "failed"]
     result = orchestrator(duel_spec, store, tmp_path).run(req)
     assert result.published, "a failed duel is not decided, and runs again"
     assert not (duel.run_dir(req) / "failed.txt").exists()
@@ -624,7 +632,10 @@ def test_a_duel_runs_on_every_card_it_is_given(workers, duel_spec, store, tmp_pa
             )
     assert seen == {"a", "b"}, "the units did not use both cards"
     plays = 2 * len(result.units)
-    assert listening < plays, "no unit was served by a server kept from an earlier one"
+    # The sides play one after another, so a kept server is reused only when a side has more
+    # units than there are slots.
+    if len(result.units) > 2 * workers:
+        assert listening < plays, "no unit was served by a server kept from an earlier one"
     assert not list(run_dir.glob("slots/*/pids.json")) or all(
         json.loads(p.read_text()) == [] for p in run_dir.glob("slots/*/pids.json")
     ), "a kept server outlived its duel"

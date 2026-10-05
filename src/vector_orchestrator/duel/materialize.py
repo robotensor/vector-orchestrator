@@ -76,7 +76,6 @@ class Prompt:
     path: Path | None = None
     sha256: str | None = None
     demo_clip: Path | None = None
-    demo_sha256: str | None = None
     void: bool = False
     error: str | None = None
     wall_s: float = 0.0
@@ -104,7 +103,6 @@ class Prompt:
             "prompt": rel(self.path),
             "sha256": self.sha256,
             "demo_clip": rel(self.demo_clip),
-            "demo_sha256": self.demo_sha256,
             "void": self.void,
             "error": self.error,
             "wall_s": self.wall_s,
@@ -121,7 +119,6 @@ class Prompt:
             path=path(doc.get("prompt")),
             sha256=doc.get("sha256"),
             demo_clip=path(doc.get("demo_clip")),
-            demo_sha256=doc.get("demo_sha256"),
             void=bool(doc.get("void")),
             error=doc.get("error"),
             wall_s=float(doc.get("wall_s") or 0.0),
@@ -565,7 +562,6 @@ def materialize_unit(
         path=prompt,
         sha256=sha,
         demo_clip=clip if has_clip else None,
-        demo_sha256=sha256_file(clip) if has_clip else None,
         wall_s=round(time.monotonic() - started, 3),
         scene_seed=reported if reported is not None else read,
     )

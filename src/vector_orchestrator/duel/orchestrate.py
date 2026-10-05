@@ -1,12 +1,13 @@
 """A duel from request to published record.
 
-    fetching -> checking -> materializing + evaluating(challenger) + evaluating(king)
+    fetching -> checking -> materializing -> evaluating(king) -> evaluating(challenger)
              -> publishing -> done | failed
 
-**Where it runs.** Once both sides are checked, the demonstrations and both sides' units run
-together in the duel's `Slots`: `workers` slots on each GPU of the host (`slots.gpus`), a job in a
-slot at a time, on that slot's card. A unit is played by both sides as soon as its prompt lands,
-before new demonstrations are made, and each slot keeps its policy server between units.
+**Where it runs.** Once both sides are checked, the duel runs in three steps, one after another:
+every unit's demonstration, then the king's units, then the challenger's (a genesis has no king).
+Each step is spread over the duel's `Slots`: `workers` slots on each GPU of the host
+(`slots.gpus`), a job in a slot at a time, on that slot's card; each slot keeps its policy server
+between units.
 
 **Identity.** A duel's id is `ids.duel_id(spec.version, challenger, king)` and its units are
 `units.deal(spec, duel_id, entropy)`, pure functions of those, so anyone holding the record can
@@ -64,14 +65,13 @@ import logging
 import threading
 import time
 from collections.abc import Iterator, Mapping
-from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ..ids import SubmissionRef, duel_id, event_id
-from ..live import LiveReporter, build_frame
+from ..progress import ProgressBoard, build_progress
 from ..runner import RUNNING
 from ..spec import Spec
 from ..store.records import index_record, media_shas, now_iso, unit_row
@@ -92,6 +92,9 @@ FAILED_FILE = "failed.txt"
 #: The king's refusal, recorded once: a resumed duel keeps the forfeit rather than asking again.
 FORFEIT_FILE = "forfeit.json"
 SIDES = ("challenger", "king")
+#: The order the sides play a duel's units in, once every demonstration is made: the king's run
+#: first, so a challenger is measured against a finished one.
+EVALUATION_ORDER = ("king", "challenger")
 #: Finished clips are put in the store (and mirrored) every this many units.
 MEDIA_FLUSH_UNITS = 4
 
@@ -248,7 +251,7 @@ class DuelResult:
 
 @dataclass
 class _Duel:
-    """One run of one duel: what the phases share, and what a live frame shows."""
+    """One run of one duel: what the phases share, and what its progress shows."""
 
     req: DuelRequest
     duel_id: str
@@ -270,6 +273,8 @@ class _Duel:
     pending_media: dict[tuple[str, str], Path] = field(default_factory=dict)
     #: Why the king forfeits, when its submission was refused.
     forfeit: str | None = None
+    #: How the duel ended, once it has (`progress.OUTCOMES`).
+    outcome: dict[str, Any] | None = None
 
     def row(self, unit_id: str) -> dict[str, Any]:
         return next(u for u in self.units if u["unit_id"] == unit_id)
@@ -285,7 +290,7 @@ class Orchestrator:
         runtime: Any,
         run_root: str | Path,
         *,
-        live: LiveReporter | None = None,
+        progress: ProgressBoard | None = None,
         mirror: Any | None = None,
         benchmark: Any | None = None,
         workers: int = 1,
@@ -302,10 +307,11 @@ class Orchestrator:
         #: The GPUs to use; None for the host's (`slots.gpus`), read as each duel starts, since a
         #: validator's GPU lease sets CUDA_VISIBLE_DEVICES for the step it runs a duel in.
         self.cards = list(cards) if cards is not None else None
-        #: What the duel's workers share: its rows, live frames and the store.
+        #: What the duel's workers share: its rows, its progress and the store.
         self._lock = threading.RLock()
-        self.live = live or LiveReporter(None, None)
         self.mirror = mirror
+        #: Where the running duel's progress goes: the store's `running.json`, mirrored with it.
+        self.progress = progress or ProgressBoard(store, push=self.push_touched)
         #: The RoboTwin-Vector checkout (`robotwin.RoboTwin`), found on first use; a test's fake.
         self._benchmark = benchmark
 
@@ -378,7 +384,15 @@ class Orchestrator:
         reason = f"the crown moved from {was} to {who} since this duel was asked for"
         log.warning("duel %s is stale: %s; its run is at %s", run_dir.name, reason, moved)
         if duel is not None:
-            self._post(duel, force=True, phase="failed", side=None, message=f"stale: {reason}")
+            self._post(
+                duel,
+                force=True,
+                phase="failed",
+                side=None,
+                current=None,
+                message=f"stale: {reason}",
+                outcome={"status": "stale", "reason": reason},
+            )
         raise CrownMoved(req, reason, moved)
 
     # -- the duel ---------------------------------------------------------------------------
@@ -474,36 +488,42 @@ class Orchestrator:
             log.warning("duel %s: the king forfeits: %s", duel.event_id[:16], duel.forfeit)
             atomic_write_json(duel.run_dir / FORFEIT_FILE, {"side": "king", "reason": duel.forfeit})
 
-        # ---- materializing and evaluating, together in the slots
-        self._post(
-            duel, force=True, phase="materializing", message="materializing the demonstrations"
-        )
+        # ---- one step at a time, each spread over the slots: every demonstration, then the
+        # king's units, then the challenger's
         duel.prompts = Materialized(root=duel.run_dir / "prompts", prompts={}, done=False)
         cards = self.cards if self.cards is not None else gpus()
         slots = Slots(self.workers, cards, duel.run_dir / "slots")
         log.info("duel %s runs on %d slot(s): %s", duel.event_id[:16], len(slots), cards)
         abort = threading.Event()
         try:
-            with ThreadPoolExecutor(max_workers=3, thread_name_prefix="duel") as phases:
-                jobs = [phases.submit(self._materialize, duel, slots, abort)]
-                jobs += [
-                    phases.submit(self._evaluate, duel, side, slots, abort) for side, _ in sides
-                ]
-                try:
-                    wait(jobs, return_when=FIRST_EXCEPTION)
-                    for job in jobs:
-                        if job.done() and job.exception() is not None:
-                            job.result()
-                    for job in jobs:
-                        job.result()
-                except BaseException:
-                    # An interrupt, or one phase failing: end what the slots run - none of it is
-                    # recorded - so the other phases stop too, and the duel resumes from here.
-                    abort.set()
-                    duel.prompts.finish(failed=True)
-                    RUNNING.stop()
-                    slots.close()
-                    raise
+            self._post(
+                duel,
+                force=True,
+                phase="materializing",
+                side=None,
+                message="making the demonstrations",
+            )
+            self._materialize(duel, slots, abort)
+            duel.prompts.finish()
+            for side in EVALUATION_ORDER:
+                if side not in dict(sides):
+                    continue
+                self._post(
+                    duel,
+                    force=True,
+                    phase="evaluating",
+                    side=side,
+                    message=f"evaluating the {side}",
+                )
+                self._evaluate(duel, side, slots, abort)
+        except BaseException:
+            # An interrupt, or a step failing: end what the slots run - none of it is recorded -
+            # and the duel resumes from here.
+            abort.set()
+            duel.prompts.finish(failed=True)
+            RUNNING.stop()
+            slots.close()
+            raise
         finally:
             slots.close()
             RUNNING.resume()
@@ -674,7 +694,14 @@ class Orchestrator:
 
     def _publish(self, duel: _Duel) -> DuelResult:
         spec, req = self.spec, duel.req
-        self._post(duel, force=True, phase="publishing", side=None, message="publishing the record")
+        self._post(
+            duel,
+            force=True,
+            phase="publishing",
+            side=None,
+            current=None,
+            message="publishing the record",
+        )
         existing = self._published(duel.event_id)
         if existing is not None:
             return self._republished(req, existing)
@@ -689,7 +716,7 @@ class Orchestrator:
             verdict: dict[str, Any] = {"reason": reason}
         else:
             units = duel.units
-            result = score.verdict(units, spec.margin, spec.tasks, spec.alpha)
+            result = score.verdict(units, spec.margin, spec.tasks)
             king_scores, challenger_scores = result.king_scores, result.challenger_scores
             dethroned, reason = result.dethroned, result.reason
             king, challenger = req.king, req.challenger
@@ -748,7 +775,19 @@ class Orchestrator:
         )
         atomic_write_json(duel.run_dir / OUTCOME_FILE, result_.as_dict())
         moved = "moves" if dethroned or req.kind == "genesis" else "stays"
-        self._post(duel, force=True, phase="done", message=f"the crown {moved}: {reason}")
+        self._post(
+            duel,
+            force=True,
+            phase="done",
+            message=f"the crown {moved}: {reason}",
+            outcome={
+                "status": "published",
+                "dethroned": dethroned,
+                "reason": reason,
+                "king_score": king_scores["average"],
+                "challenger_score": challenger_scores["average"] if challenger_scores else None,
+            },
+        )
         return result_
 
     def _republished(self, req: DuelRequest, record: dict[str, Any]) -> DuelResult:
@@ -809,7 +848,15 @@ class Orchestrator:
             units=duel.units,
         )
         atomic_write_json(duel.run_dir / OUTCOME_FILE, {**result.as_dict(), "sides": duel.sides})
-        self._post(duel, force=True, phase="failed", side=None, message=f"{status}: {reason}")
+        self._post(
+            duel,
+            force=True,
+            phase="failed",
+            side=None,
+            current=None,
+            message=f"{status}: {reason}",
+            outcome={"status": status, "reason": reason},
+        )
         return result
 
     def _failed(self, duel: _Duel, reason: str) -> None:
@@ -818,7 +865,15 @@ class Orchestrator:
             (duel.run_dir / FAILED_FILE).write_text(reason + "\n", encoding="utf-8")
         except OSError:
             pass
-        self._post(duel, force=True, phase="failed", side=None, message=f"failed: {reason}")
+        self._post(
+            duel,
+            force=True,
+            phase="failed",
+            side=None,
+            current=None,
+            message=f"failed: {reason}",
+            outcome={"status": "failed", "reason": reason},
+        )
 
     # -- plumbing ---------------------------------------------------------------------------
 
@@ -857,7 +912,7 @@ class Orchestrator:
             setattr(duel, key, value)
         req = duel.req
         try:
-            frame = build_frame(
+            doc = build_progress(
                 event_id=duel.event_id,
                 kind=req.kind,
                 king=req.king.as_dict() if req.king else None,
@@ -868,11 +923,12 @@ class Orchestrator:
                 current=duel.current,
                 message=duel.message,
                 started_at=duel.started_at,
+                outcome=duel.outcome,
             )
         except ValueError:
-            log.exception("a live frame could not be built")
+            log.exception("the duel's progress could not be built")
             return
-        self.live.post(frame, force=force)
+        self.progress.post(doc, force=force)
 
 
 def _other(side: str) -> str:

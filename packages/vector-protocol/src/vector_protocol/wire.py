@@ -5,7 +5,7 @@ Ported from `icilval.model.wire` (ICIL-LiberoGen-bench, branch `milestone-two-fi
 **Why its own format.** A benchmark's own transport carries that benchmark's types, and a policy
 that spoke it would be written for one benchmark. This format carries named arrays and JSON fields
 and nothing else: the benchmark and the policy agree on the names (`frames_head`, `qpos`,
-`actions`, ...) between themselves, and nothing here reads them.
+`endpose`, ...) between themselves, and nothing here reads them.
 
 **What it deliberately cannot do.** It never pickles. `Connection.send` and `Connection.recv`
 pickle, and unpickling runs code chosen by whoever wrote the bytes - on one side of this socket is

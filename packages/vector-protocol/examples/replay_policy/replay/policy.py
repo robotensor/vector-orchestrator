@@ -1,7 +1,8 @@
 """The replay policy: open-loop playback of the one demonstration.
 
 It ignores every observation. The k-th call to `act` after `reset` returns the demonstration's
-`actions[k]`, and the last action once the demonstration has run out. It is the floor a learned
+k-th action, and the last action once the demonstration has run out. The expert is
+position-controlled, so its actions are the joint positions it reached: `qpos[1:]`. It is the floor a learned
 policy has to beat, and the smallest thing that exercises the whole protocol.
 """
 
@@ -14,7 +15,7 @@ import numpy as np
 
 
 class ReplayPolicy:
-    #: The demonstration's `actions` are joint-position targets.
+    #: The demonstration's actions, `qpos[1:]`, are joint-position targets.
     action_type = "qpos"
 
     def __init__(self) -> None:
@@ -22,12 +23,14 @@ class ReplayPolicy:
         self._step = 0
 
     def set_demonstration(self, arrays: Mapping[str, np.ndarray], info: Mapping[str, Any]) -> None:
-        if "actions" not in arrays:
-            raise ValueError(f"the demonstration has no 'actions', only {sorted(arrays)}")
-        actions = np.array(arrays["actions"], dtype=np.float64)  # a copy: arrays are read-only
-        if actions.ndim != 2 or actions.shape[0] == 0:
-            raise ValueError(f"'actions' must be a non-empty (T-1, D) array, not {actions.shape}")
-        self._actions = actions
+        if "qpos" not in arrays:
+            raise ValueError(f"the demonstration has no 'qpos', only {sorted(arrays)}")
+        qpos = np.array(arrays["qpos"], dtype=np.float64)  # a copy: arrays are read-only
+        if qpos.ndim != 2 or qpos.shape[0] < 2:
+            raise ValueError(
+                f"'qpos' must be a (T, D) array of at least two frames, not {qpos.shape}"
+            )
+        self._actions = qpos[1:]
         self._step = 0
 
     def reset(self, seed: int) -> None:

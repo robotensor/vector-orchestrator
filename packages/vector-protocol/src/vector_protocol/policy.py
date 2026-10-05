@@ -4,8 +4,8 @@ A policy is a plain class. The server builds it once from `policy.yaml`, with th
 `kwargs`, and then, for as long as its one client is connected:
 
 - `set_demonstration(arrays, info)` hands it the one demonstration, as named arrays. The names are
-  the benchmark's (RoboTwin: `frames_<camera>`, `qpos`, `endpose`, `actions`, `times`,
-  `frequency`); `info` carries public fields only, such as the frame rate and the camera names.
+  the benchmark's (RoboTwin: `frames_<camera>`, `qpos`, `endpose`, `times`, `frequency`; the
+  expert's actions are `qpos[1:]`); `info` carries public fields only, such as the frame rate and the camera names.
   Privileged prompt metadata never reaches a policy.
 - `reset(seed)` starts an episode.
 - `act(observation)` answers one observation with at least `{"action": ...}`, one action of shape

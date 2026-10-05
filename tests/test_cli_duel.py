@@ -19,13 +19,12 @@ REPLAY_AT = REPLAY_REF.entry
 
 @pytest.fixture
 def cli_spec(spec_doc, write_spec):
-    """Three tasks, one run each, and an alpha three straight wins can clear."""
+    """Three tasks, one run each."""
     doc = {
         **spec_doc,
         "tasks": ["place_cube_plate", "stack_two_blocks", "press_button"],
         "runs_per_task": 1,
     }
-    doc["crown"] = {**doc["crown"], "alpha": 0.2}
     doc["budgets"] = {**doc["budgets"], "act": 2.0}
     return write_spec(doc, name="cli.json")
 
@@ -105,7 +104,5 @@ def test_what_the_duel_command_refuses(cli_spec, store, tmp_path, capsys):
     assert "no local directory for org/nobody" in capsys.readouterr().err
     assert run(cli_spec, store, tmp_path, "--challenger", "no-revision") == 2
     assert "is not owner/name@revision" in capsys.readouterr().err
-    assert run(cli_spec, store, tmp_path, "--challenger", REPLAY_AT, "--live-url", "http://x") == 2
-    assert "--live-token-env" in capsys.readouterr().err
     assert run(cli_spec, tmp_path / "nothing", tmp_path, "--challenger", REPLAY_AT) == 2
     assert "is not a store" in capsys.readouterr().err

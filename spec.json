@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 1,
   "benchmark": {
     "repo": "robotensor/RoboTwin-Vector",
     "branch": "vector"
@@ -27,7 +27,6 @@
   "step_ratio": 2,
   "crown": {
     "margin": 3.0,
-    "alpha": 0.05,
     "max_void": 0.2
   },
   "model": {
