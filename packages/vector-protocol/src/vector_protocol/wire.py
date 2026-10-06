@@ -1,7 +1,5 @@
 """The message format between a benchmark and a served policy: named arrays and JSON fields.
 
-Ported from `icilval.model.wire` (ICIL-LiberoGen-bench, branch `milestone-two-fields`).
-
 **Why its own format.** A benchmark's own transport carries that benchmark's types, and a policy
 that spoke it would be written for one benchmark. This format carries named arrays and JSON fields
 and nothing else: the benchmark and the policy agree on the names (`frames_head`, `qpos`,
