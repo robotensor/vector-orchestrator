@@ -29,3 +29,9 @@ api: 1
 policy: vector_runtime.policy:VectorPolicy
 kwargs: {weights: /abs/path/model.safetensors, device: "cuda:0"}
 ```
+
+## Third-party notices
+
+The network and its input/output conversion are adapted from
+[`behavior_prompting`](https://github.com/real-stanford/behavior_prompting) (MIT). See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

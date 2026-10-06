@@ -35,6 +35,9 @@ vector-runtime = "vector_runtime.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/vector_runtime"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"THIRD_PARTY_NOTICES.md" = "vector_runtime/THIRD_PARTY_NOTICES.md"
+
 [tool.ruff]
 extend = "../../pyproject.toml"
 src = ["src", "tests"]

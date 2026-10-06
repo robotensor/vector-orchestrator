@@ -8,6 +8,9 @@ of its rotation matrix, in float64) and the gripper stays as is.
 
 The prompt keeps one frame per CHUNK steps and every action, grouped CHUNK to a frame; the last
 group is padded with zeros. A live observation is converted the same way, without JPEG.
+
+Adapted from `behavior_prompting` (MIT, Copyright (c) 2026 Austin Patel); see
+THIRD_PARTY_NOTICES.md.
 """
 
 from __future__ import annotations

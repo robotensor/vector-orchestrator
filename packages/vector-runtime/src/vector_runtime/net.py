@@ -4,6 +4,9 @@ Observations are 9 tokens a frame: three CLIP ViT-B/16 camera embeddings (the CL
 proprioception projections. The demonstration is a prompt of one frame per 15 steps, each frame's
 9 tokens and its 15 actions pooled into one token. The current 2 frames cross-attend the prompt in
 a 6-layer decoder; both, flattened, condition a 1-D U-Net that denoises 16 actions in 16 DDIM steps.
+
+Adapted from `behavior_prompting` (MIT, Copyright (c) 2026 Austin Patel); see
+THIRD_PARTY_NOTICES.md.
 """
 
 from __future__ import annotations
