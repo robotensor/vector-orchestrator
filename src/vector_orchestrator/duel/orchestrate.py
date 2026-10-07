@@ -279,6 +279,8 @@ class _Duel:
     message: str = ""
     #: Finished clips not yet in the store: `(side, unit_id) -> path`.
     pending_media: dict[tuple[str, str], Path] = field(default_factory=dict)
+    #: Demonstration clips held until every demonstration is made: `unit_id -> path`.
+    pending_demos: dict[str, Path] = field(default_factory=dict)
     #: Why the king forfeits, when its submission was refused.
     forfeit: str | None = None
     #: How the duel ended, once it has (`progress.OUTCOMES`).
@@ -567,6 +569,7 @@ class Orchestrator:
             )
             self._materialize(duel, slots, abort)
             duel.prompts.finish()
+            self._flush_demos(duel)
             for side in EVALUATION_ORDER:
                 if side not in dict(sides):
                     continue
@@ -653,7 +656,7 @@ class Orchestrator:
             # among the candidates the unit names.
             row["scene_seed"] = prompt.scene_seed
             if prompt.demo_clip is not None:
-                row["demo_video"] = self.store.put_media(prompt.demo_clip)
+                duel.pending_demos[prompt.unit_id] = prompt.demo_clip
         done = sum(1 for u in duel.units if u["prompt_sha256"] or u["void"])
         self._post(duel, message=f"materialized {done} of {len(duel.units)}: {prompt.unit_id}")
 
@@ -741,6 +744,14 @@ class Orchestrator:
             if path.is_file():
                 duel.row(unit_id)[f"{side}_video"] = self.store.put_media(path)
         self.push_touched()
+
+    def _flush_demos(self, duel: _Duel) -> None:
+        with self._lock:
+            for unit_id, path in duel.pending_demos.items():
+                if path.is_file():
+                    duel.row(unit_id)["demo_video"] = self.store.put_media(path)
+            duel.pending_demos.clear()
+            self.push_touched()
 
     def _side_meta(
         self, duel: _Duel, side: str, ref: SubmissionRef, refused: str | None
