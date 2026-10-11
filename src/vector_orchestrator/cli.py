@@ -53,11 +53,11 @@ def cmd_store(args: argparse.Namespace) -> int:
         print(json.dumps(manifest, indent=2, sort_keys=True))
         return 0
 
-    from .store.mirror import mirror_store
+    from .store.mirror import MirrorUnreachable, PushRefused, mirror_store
 
     try:
         n = mirror_store(args.root, args.repo, message=args.message, prune=args.prune)
-    except ValueError as exc:
+    except (ValueError, PushRefused, MirrorUnreachable) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(f"mirrored {n} files to {args.repo}")

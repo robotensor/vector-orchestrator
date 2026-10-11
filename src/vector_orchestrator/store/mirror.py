@@ -25,7 +25,14 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from .writer import Store, atomic_write_text, index_part_name, king_after, last_record
+from .writer import (
+    Store,
+    atomic_write_json,
+    atomic_write_text,
+    index_part_name,
+    king_after,
+    last_record,
+)
 
 log = logging.getLogger(__name__)
 
@@ -76,14 +83,22 @@ def head_at(root: Path, seq: int) -> dict[str, Any] | None:
     """The `head.json` the store's own index gives after record `seq`; None when it has no such
     record."""
     root = Path(root)
+    parts, part = [], 0
+    while (root / index_part_name(part)).exists():
+        parts.append((root / index_part_name(part)).read_bytes())
+        part += 1
+    return _head_of(parts, seq)
+
+
+def _head_of(parts: Iterable[bytes], seq: int) -> dict[str, Any] | None:
+    """The head the index parts `parts` (in order) give after record `seq`; None without it."""
     king: dict | None = None
     last: dict[str, Any] | None = None
-    part = 0
-    while (root / index_part_name(part)).exists():
-        for line in (root / index_part_name(part)).read_text(encoding="utf-8").splitlines():
+    for data in parts:
+        for line in data.split(b"\n"):
             try:
-                record = json.loads(line)
-            except ValueError:
+                record = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
                 continue
             if not isinstance(record, dict) or not isinstance(record.get("seq"), int):
                 continue
@@ -91,10 +106,13 @@ def head_at(root: Path, seq: int) -> dict[str, Any] | None:
                 break
             king = king_after(record, king)
             last = record
-        part += 1
     if last is None or last["seq"] != seq:
         return None
     return {"seq": seq, "block": int(last["block"]), "king": king}
+
+
+def _as_head(head: dict[str, Any] | None) -> dict[str, Any]:
+    return {k: (head or {}).get(k) for k in ("seq", "block", "king")}
 
 
 def compare(root: Path, head: dict[str, Any] | None, repo: str) -> None:
@@ -107,9 +125,7 @@ def compare(root: Path, head: dict[str, Any] | None, repo: str) -> None:
             f"{repo} holds {theirs} records and {root} only {ours}: "
             "nothing is pushed until the store is restored from it"
         )
-    if theirs and head_at(root, theirs) != {
-        k: (head or {}).get(k) for k in ("seq", "block", "king")
-    }:
+    if theirs and head_at(root, theirs) != _as_head(head):
         raise StoreDiverged(
             f"{root} and {repo} disagree about record #{theirs}: the two stores published "
             "different records"
@@ -152,8 +168,22 @@ class Mirror:
 
         self.root = Path(root)
         self.repo = repo
+        self.private = private
         self.api = HfApi(token=token)
-        self.api.create_repo(repo, repo_type="dataset", exist_ok=True, private=private)
+        self._created = False
+        # A Hub that does not answer now must not stop a store with a history going on: the
+        # repository is made (or found) again before the first push that needs it.
+        try:
+            self._create()
+        except Exception as exc:  # noqa: BLE001 - retried by the next push
+            log.warning("%s: not created or found yet: %s", repo, exc)
+
+    def _create(self) -> None:
+        if not self._created:
+            self.api.create_repo(
+                self.repo, repo_type="dataset", exist_ok=True, private=self.private
+            )
+            self._created = True
 
     def read(self, path: str) -> bytes | None:
         """One file of the repository as it is now; None when the repository has no such file.
@@ -200,6 +230,7 @@ class Mirror:
         ]
         if not ops:
             return None
+        self._create()
         self.check_not_behind()
         info = self.api.create_commit(
             repo_id=self.repo, repo_type="dataset", operations=ops, commit_message=message
@@ -231,6 +262,7 @@ class Mirror:
                 f"{self.root} lacks {len(missing)} event(s) its index names (a store restored "
                 f"from the mirror holds no events): refusing to delete them from {self.repo}"
             )
+        self._create()
         self.check_not_behind()
         info = self.api.repo_info(self.repo, repo_type="dataset", files_metadata=False)
         remote = {s.rfilename for s in (info.siblings or [])}
@@ -263,6 +295,18 @@ def missing_events(root: Path) -> list[str]:
     return missing
 
 
+def _last_seq(part: bytes) -> int:
+    """The seq of the last whole record in one index part's bytes; 0 for none."""
+    for line in reversed(part.split(b"\n")):
+        try:
+            record = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if isinstance(record, dict) and isinstance(record.get("seq"), int):
+            return int(record["seq"])
+    return 0
+
+
 def restore(store: Store, mirror: Mirror, extra: Iterable[str] = ()) -> bool:
     """Take the store up where the mirror has it; whether anything was taken.
 
@@ -293,6 +337,16 @@ def restore(store: Store, mirror: Mirror, extra: Iterable[str] = ()) -> bool:
                         f"{mirror.repo} counts {theirs} records but has no {index_part_name(part)}"
                     )
                 parts[part] = data
+            held = _last_seq(parts[max(parts)])
+            if held < theirs:
+                raise StoreDiverged(
+                    f"{mirror.repo}'s head counts {theirs} records but its index holds {held}: "
+                    "the mirror is not whole"
+                )
+            if _head_of([parts[p] for p in sorted(parts)], theirs) != _as_head(head):
+                raise StoreDiverged(
+                    f"{mirror.repo}'s head.json is not what its own index gives at #{theirs}"
+                )
             for part in store.index_parts():
                 if not parts.get(part, b"").startswith(store.index_part_path(part).read_bytes()):
                     raise StoreDiverged(
@@ -300,16 +354,16 @@ def restore(store: Store, mirror: Mirror, extra: Iterable[str] = ()) -> bool:
                         "two stores published different records"
                     )
             manifest = mirror.read("manifest.json")
-            head = mirror.read("head.json")
-            if manifest is None or head is None:
-                raise StoreDiverged(f"{mirror.repo} has an index but no manifest.json or head.json")
+            if manifest is None:
+                raise StoreDiverged(f"{mirror.repo} has an index but no manifest.json")
             atomic_write_text(store.root / "manifest.json", manifest.decode("utf-8"))
             for part, data in parts.items():
                 atomic_write_text(store.index_part_path(part), data.decode("utf-8"))
-            atomic_write_text(store.head_path(), head.decode("utf-8"))
-            log.info(
-                "restored %s from %s: %d records (was %d)", store.root, mirror.repo, theirs, ours
-            )
+            # The head from the index just written, never a second read of the mirror's, which a
+            # push between the two reads could have moved past it.
+            seq = local_seq(store.root)
+            atomic_write_json(store.head_path(), head_at(store.root, seq))
+            log.info("restored %s from %s: %d records (was %d)", store.root, mirror.repo, seq, ours)
             taken = True
         for name in extra:
             path = store.root / name

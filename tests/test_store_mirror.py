@@ -21,12 +21,17 @@ class FakeApi:
     files: dict[str, bytes] = {}
     fail: Exception | None = None
     reads: list[str] = []
+    #: What `create_repo` raises, and how often it was asked.
+    create_fail: Exception | None = None
+    creates: int = 0
 
     def __init__(self, token=None):
         self.token = token
 
     def create_repo(self, repo, **kw):
-        pass
+        FakeApi.creates += 1
+        if FakeApi.create_fail is not None:
+            raise FakeApi.create_fail
 
     def repo_info(self, repo, **kw):
         return SimpleNamespace(siblings=[SimpleNamespace(rfilename=f) for f in FakeApi.remote])
@@ -52,7 +57,7 @@ class FakeApi:
 @pytest.fixture
 def api(monkeypatch):
     FakeApi.remote, FakeApi.commits, FakeApi.files, FakeApi.reads = set(), [], {}, []
-    FakeApi.fail = None
+    FakeApi.fail, FakeApi.create_fail, FakeApi.creates = None, None, 0
     monkeypatch.setattr(huggingface_hub, "HfApi", FakeApi)
     return FakeApi
 
@@ -322,3 +327,46 @@ def test_a_store_ahead_of_the_mirror_on_the_same_history_pushes(spec, published,
     mirror.mirror_store(published.root, "org/store", files=["head.json"])
     assert mirror.restore(published, mirror.Mirror(published.root, "org/store")) is False
     assert len(api.commits) == 1
+
+
+def test_a_mirror_whose_index_is_short_of_its_head_is_not_taken(spec, tmp_path, published, api):
+    """A host killed between pushing its head and its index left the mirror so: not whole."""
+    api.files = mirrored(published)
+    lines = published.index_part_path(0).read_bytes().splitlines(keepends=True)
+    api.files["index-0000.jsonl"] = b"".join(lines[:2])
+    fresh = Store(tmp_path / "fresh", spec)
+    with pytest.raises(mirror.StoreDiverged, match="holds 2: the mirror is not whole"):
+        mirror.restore(fresh, mirror.Mirror(fresh.root, "org/store"))
+    assert fresh.manifest() is None and fresh.index_parts() == []
+
+
+def test_a_mirror_head_its_own_index_does_not_give_is_not_taken(spec, tmp_path, published, api):
+    """Not a second read of the mirror's head, which a push between the reads could move on."""
+    api.files = mirrored(published)
+    api.files["head.json"] = b'{"seq": 3, "block": 3, "king": {"key": "stale"}}'
+    fresh = Store(tmp_path / "fresh", spec)
+    with pytest.raises(mirror.StoreDiverged, match="not what its own index gives"):
+        mirror.restore(fresh, mirror.Mirror(fresh.root, "org/store"))
+    assert fresh.manifest() is None and fresh.index_parts() == []
+    api.files["head.json"] = (published.root / "head.json").read_bytes()
+    mirror.restore(fresh, mirror.Mirror(fresh.root, "org/store"))
+    assert fresh.head() == published.head()
+
+
+def test_a_hub_down_when_the_mirror_is_made_is_tried_again_at_the_push(store, api):
+    api.create_fail = OSError("no route to host")
+    m = mirror.Mirror(store.root, "org/store")  # does not raise: a store may go on without it
+    with pytest.raises(OSError):
+        m.push(["head.json"])
+    api.create_fail = None
+    m.push(["head.json"])
+    m.push(["head.json"])
+    assert api.creates == 3 and len(api.commits) == 2
+
+
+def test_the_cli_says_why_a_push_was_refused(store, published, api, capsys):
+    from vector_orchestrator.cli import main
+
+    api.files = mirrored(published)
+    assert main(["store", "mirror", "--root", str(store.root), "--repo", "org/store"]) == 2
+    assert "holds 3 records" in capsys.readouterr().err
