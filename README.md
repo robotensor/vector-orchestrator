@@ -85,7 +85,12 @@ champions.json             the models the validator pays now
 index-NNNN.jsonl           one line per event: genesis, duel or vacate
 events/<event_id>.json     units, per-task scores, verdict, seed block
 media/<sha[:2]>/<sha>.mp4  demonstration and rollout clips
+validator/<lane>.json      the driving validator's lane state, for another host to take up
 ```
+
+A mirror push is refused when the dataset holds records the local store does not, and
+`store/mirror.py`'s `restore` takes a store up from its dataset by reading only the manifest,
+head and index parts.
 
 ## Tests
 

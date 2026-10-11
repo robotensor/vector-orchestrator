@@ -9,6 +9,8 @@
                                `duel`, or a `vacate` (a king whose submission is gone, dethroned)
     events/<event_id>.json     a duel's units and scores
     media/<sha[:2]>/<sha>.mp4  clips
+    validator/<lane>.json      what the validator driving the store remembers (its lane's state:
+                               which hotkey committed what), so another host can take it up
 
 Every write is atomic (tmp + rename) except the index append, a single O_APPEND write and fsync, so
 a reader sees at most one torn final line. The index is the truth: a record's seq comes from its
@@ -101,6 +103,30 @@ def read_json(path: Path) -> Any | None:
         return None
 
 
+def index_part_name(part: int) -> str:
+    return f"index-{part:04d}.jsonl"
+
+
+def last_record(root: str | Path) -> dict[str, Any] | None:
+    """The last whole line of the newest index part under `root`, as the index itself has it."""
+    root = Path(root)
+    parts, part = [], 0
+    while (root / index_part_name(part)).exists():
+        parts.append(root / index_part_name(part))
+        part += 1
+    for path in reversed(parts):
+        for line in reversed(path.read_bytes().split(b"\n")):
+            if not line:
+                continue
+            try:
+                record = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                continue
+            if isinstance(record, dict) and isinstance(record.get("seq"), int):
+                return record
+    return None
+
+
 class Store:
     def __init__(self, root: str | Path, spec: Spec):
         self.root = Path(root)
@@ -112,7 +138,7 @@ class Store:
 
     # ---------------------------------------------------------------- paths
     def index_part_path(self, part: int) -> Path:
-        return self.root / f"index-{part:04d}.jsonl"
+        return self.root / index_part_name(part)
 
     def head_path(self) -> Path:
         return self.root / "head.json"
@@ -131,6 +157,9 @@ class Store:
 
     def media_path(self, sha: str) -> Path:
         return self.root / "media" / sha[:2] / f"{sha}.{VIDEO}"
+
+    def validator_path(self, lane: str) -> Path:
+        return self.root / "validator" / f"{lane}.json"
 
     def _touch(self, path: Path) -> None:
         with self._touched_lock:
@@ -221,17 +250,7 @@ class Store:
 
     def last_record(self) -> dict[str, Any] | None:
         """The last whole line of the newest index part, as the index itself has it."""
-        for part in reversed(self.index_parts()):
-            for line in reversed(self.index_part_path(part).read_bytes().split(b"\n")):
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line.decode("utf-8"))
-                except (UnicodeDecodeError, ValueError):
-                    continue
-                if isinstance(record, dict) and isinstance(record.get("seq"), int):
-                    return record
-        return None
+        return last_record(self.root)
 
     def next_seq(self) -> int:
         """One past the index's last record. `head.json` is a cache and never decides this."""
@@ -320,6 +339,11 @@ class Store:
     def write_champions(self, doc: dict[str, Any]) -> None:
         atomic_write_json(self.champions_path(), doc)
         self._touch(self.champions_path())
+
+    def write_validator(self, lane: str, doc: dict[str, Any]) -> None:
+        """The driving validator's state for `lane`, kept with the store and mirrored with it."""
+        atomic_write_json(self.validator_path(lane), doc)
+        self._touch(self.validator_path(lane))
 
     def put_media(self, src: str | Path) -> str:
         src = Path(src)

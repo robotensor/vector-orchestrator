@@ -80,6 +80,7 @@ from ..ids import SubmissionRef, duel_id, event_id
 from ..progress import ProgressBoard, build_progress
 from ..runner import RUNNING
 from ..spec import Spec
+from ..store.mirror import PushRefused
 from ..store.records import index_record, media_shas, now_iso, unit_row
 from ..store.writer import Store, atomic_write_json, read_json
 from ..units import deal
@@ -972,6 +973,11 @@ class Orchestrator:
             return
         try:
             self.mirror.push(files)
+        except PushRefused as exc:
+            # Not a hiccup: this store does not share the mirror's history, and nothing it holds
+            # is pushed until it does. Kept as touched, so a store taken up again pushes it then.
+            log.error("mirror push refused: %s", exc)
+            self.store.touched.update(files)
         except Exception as exc:  # noqa: BLE001 - mirroring is retried with the next push
             log.warning("mirror push failed: %s", exc)
             self.store.touched.update(files)
