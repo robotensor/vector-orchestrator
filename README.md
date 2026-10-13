@@ -52,8 +52,10 @@ checked against the architecture and served by the validator's own code, so no s
 runs.
 
 **The throne.** With no king, the first challenger is crowned by a `genesis` event. If a king's
-repository is gone, `Orchestrator.vacate` dethrones it without a duel: a `vacate` event empties the
-throne, and the next challenger takes it by genesis.
+repository is gone, `Orchestrator.vacate` dethrones it without a duel: a `vacate` event hands the
+crown back to the successor it names (the newest earlier king still there), or with none empties
+the throne for the next challenger to take by genesis. Any other champion whose repository is gone
+is struck off by `Orchestrator.retire`: a `retire` event, which leaves the crown where it is.
 
 **Hardware.** The engine uses every visible GPU, with `--workers` units per card. Interrupted duels
 resume from `runs/<event id>/`.
@@ -82,7 +84,7 @@ head.json                  current seq, block and king
 queue.json                 validator queue
 running.json               the duel running now and how far it has got
 champions.json             the models the validator pays now
-index-NNNN.jsonl           one line per event: genesis, duel or vacate
+index-NNNN.jsonl           one line per event: genesis, duel, vacate or retire
 events/<event_id>.json     units, per-task scores, verdict, seed block
 media/<sha[:2]>/<sha>.mp4  demonstration and rollout clips
 validator/<lane>.json      the driving validator's lane state, for another host to take up

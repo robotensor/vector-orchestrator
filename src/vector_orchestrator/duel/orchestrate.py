@@ -56,9 +56,15 @@ returns it.
 
 **Vacate.** A king whose submission is gone (its repository deleted or made private) is taken off
 the throne without a duel: `vacate` publishes an event of kind `vacate` naming it in the record's
-`king` slot, with no challenger, no scores and `dethroned` set. The throne is then empty, and the
-next challenger takes it by genesis. The caller decides that the submission is gone; nothing here
-asks the Hub.
+`king` slot, with no scores and `dethroned` set. Its `challenger` slot names the successor the
+crown returns to - the newest earlier king still there, as the caller picks it - just as a duel's
+names who takes the crown when it moves. With no successor (and in a vacate published before
+successors were) the throne is empty, and the next challenger takes it by genesis.
+
+**Retire.** A champion that no longer holds the crown and whose submission is gone is struck off
+by an event of kind `retire`, naming it in the record's `king` slot as a vacate does, with no
+challenger and `dethroned` unset: the crown does not move. Neither is ever undone. The caller
+decides that a submission is gone; nothing here asks the Hub.
 
 **Genesis.** With no king yet, the first challenger is crowned by an event of kind `genesis`: its side is materialized and evaluated like any other,
 and published with its own scores in the record's `king` slot, which is where a genesis names what
@@ -101,6 +107,8 @@ FORFEIT_FILE = "forfeit.json"
 SIDES = ("challenger", "king")
 #: The kind of the event that takes the crown from a king whose submission is gone.
 VACATE = "vacate"
+#: The kind of the event that strikes off a champion, not the king, whose submission is gone.
+RETIRE = "retire"
 #: The order the sides play a duel's units in, once every demonstration is made: the king's run
 #: first, so a challenger is measured against a finished one.
 EVALUATION_ORDER = ("king", "challenger")
@@ -408,56 +416,99 @@ class Orchestrator:
 
     # -- the throne -------------------------------------------------------------------------
 
-    def vacate(self, king: SubmissionRef, *, block: int, reason: str) -> dict[str, Any]:
-        """Take the crown from `king`, whose submission is gone, and publish that as an event of
-        kind `vacate`; its index record. Run again for the same king and block, it returns the
-        record already published. `CrownMoved`-free: a head that no longer names `king` raises
-        `ValueError`, since nothing then holds the crown it would take."""
-        eid = event_id(VACATE, block, king.key)
-        existing = self._published(eid)
+    def vacate(
+        self,
+        king: SubmissionRef,
+        *,
+        block: int,
+        reason: str,
+        successor: SubmissionRef | None = None,
+    ) -> dict[str, Any]:
+        """Take the crown from `king`, whose submission is gone, and hand it to `successor` (None
+        leaves the throne empty); published as an event of kind `vacate`, and its index record.
+        Run again for the same king and block, it returns the record already published.
+        `CrownMoved`-free: a head that no longer names `king` raises `ValueError`, since nothing
+        then holds the crown it would take."""
+        existing = self._published(event_id(VACATE, block, king.key))
         if existing is not None:
             return existing
+        if successor is not None and successor.key == king.key:
+            raise ValueError(f"{king.entry} cannot succeed itself")
         head = self.store.head() or {}
         if head.get("king") != king.as_dict():
             holder = (head.get("king") or {}).get("repo") or "nobody"
             raise ValueError(f"{king.entry} does not hold the crown ({holder} does)")
+        notes = [f"king vacated: {reason}"]
+        if successor is not None:
+            notes.append(f"the crown returns to {successor.entry}")
+        return self._strike(VACATE, king, successor, block=block, reason=reason, notes=notes)
+
+    def retire(self, champion: SubmissionRef, *, block: int, reason: str) -> dict[str, Any]:
+        """Strike off `champion`, a model once crowned that no longer holds the crown and whose
+        submission is gone, as an event of kind `retire`; its index record. Run again for the same
+        champion and block, it returns the record already published. The king is not retired but
+        vacated (`ValueError`), since that moves the crown."""
+        existing = self._published(event_id(RETIRE, block, champion.key))
+        if existing is not None:
+            return existing
+        head = self.store.head() or {}
+        if head.get("king") == champion.as_dict():
+            raise ValueError(f"{champion.entry} holds the crown: vacate it instead")
+        notes = [f"champion retired: {reason}"]
+        return self._strike(RETIRE, champion, None, block=block, reason=reason, notes=notes)
+
+    def _strike(
+        self,
+        kind: str,
+        model: SubmissionRef,
+        successor: SubmissionRef | None,
+        *,
+        block: int,
+        reason: str,
+        notes: list[str],
+    ) -> dict[str, Any]:
+        """Publish a `vacate` or a `retire` of `model`, and its index record: nothing was played,
+        so no duel, seed, scores or units."""
+        eid = event_id(kind, block, model.key)
         finished_at = now_iso()
+        dethroned = kind == VACATE
+        challenger = successor.as_dict() if successor is not None else None
         record = index_record(
             event_id=eid,
-            kind=VACATE,
+            kind=kind,
             block=block,
             finished_at=finished_at,
-            king=king.as_dict(),
-            challenger=None,
+            king=model.as_dict(),
+            challenger=challenger,
             king_score=None,
             challenger_score=None,
-            dethroned=True,
+            dethroned=dethroned,
             units=[],
         )
-        # The same keys as a duel's event: nothing was played, so no duel, seed, scores or units.
+        # The same keys as a duel's event.
         event = {
             "event_id": eid,
             "duel_id": None,
-            "kind": VACATE,
+            "kind": kind,
             "block": block,
             "seed": None,
             "spec_version": self.spec.version,
             "runs_per_task": 0,
             "started_at": finished_at,
             "finished_at": finished_at,
-            "king": king.as_dict(),
-            "challenger": None,
+            "king": model.as_dict(),
+            "challenger": challenger,
             "scores": {"king": None, "challenger": None},
-            "dethroned": True,
+            "dethroned": dethroned,
             "verdict": {"reason": reason},
             "benchmark": {},
-            "notes": [f"king vacated: {reason}"],
+            "notes": notes,
             "units": [],
         }
         self.store.write_event(event)
         record["seq"] = self.store.append(record)
         self.push_touched()
-        log.warning("the crown is taken from %s: %s", king.entry, reason)
+        log.warning("%s %s: %s", "vacated" if dethroned else "retired", model.entry, reason)
         return record
 
     # -- the duel ---------------------------------------------------------------------------

@@ -527,6 +527,59 @@ def test_only_the_king_can_be_vacated(duel_spec, store, tmp_path):
     assert store.head()["king"] == ZERO_REF.as_dict()
 
 
+def test_a_vacated_king_hands_the_crown_back_to_its_successor(duel_spec, store, tmp_path):
+    crowned(store, duel_spec, ZERO_REF, block=1)
+    crowned(store, duel_spec, GONE_REF, block=2)
+    orch = orchestrator(duel_spec, store, tmp_path)
+
+    record = orch.vacate(GONE_REF, block=3, reason="its repository is gone", successor=ZERO_REF)
+
+    assert record["kind"] == "vacate" and record["dethroned"] is True
+    assert record["king"] == GONE_REF.as_dict() and record["challenger"] == ZERO_REF.as_dict()
+    assert store.head()["king"] == ZERO_REF.as_dict()
+    assert event_of(store, record)["notes"] == [
+        "king vacated: its repository is gone",
+        f"the crown returns to {ZERO_REF.entry}",
+    ]
+    verified(store, duel_spec)
+    assert orch.vacate(GONE_REF, block=3, reason="again", successor=ZERO_REF) == record
+    assert len(store.iter_index()) == 3
+
+
+def test_a_king_cannot_succeed_itself(duel_spec, store, tmp_path):
+    crowned(store, duel_spec, GONE_REF)
+    with pytest.raises(ValueError, match="cannot succeed itself"):
+        orchestrator(duel_spec, store, tmp_path).vacate(
+            GONE_REF, block=2, reason="gone", successor=GONE_REF
+        )
+    assert len(store.iter_index()) == 1
+
+
+def test_a_champion_whose_submission_is_gone_is_retired_and_the_crown_stays(
+    duel_spec, store, tmp_path
+):
+    crowned(store, duel_spec, GONE_REF, block=1)
+    crowned(store, duel_spec, ZERO_REF, block=2)
+    orch = orchestrator(duel_spec, store, tmp_path)
+
+    record = orch.retire(GONE_REF, block=3, reason="its repository is gone")
+
+    assert record["kind"] == "retire" and record["dethroned"] is False
+    assert record["king"] == GONE_REF.as_dict() and record["challenger"] is None
+    assert store.head()["king"] == ZERO_REF.as_dict()
+    assert event_of(store, record)["notes"] == ["champion retired: its repository is gone"]
+    verified(store, duel_spec)
+    assert orch.retire(GONE_REF, block=3, reason="again") == record
+    assert len(store.iter_index()) == 3
+
+
+def test_the_king_is_vacated_not_retired(duel_spec, store, tmp_path):
+    crowned(store, duel_spec, ZERO_REF)
+    with pytest.raises(ValueError, match="vacate it instead"):
+        orchestrator(duel_spec, store, tmp_path).retire(ZERO_REF, block=2, reason="gone")
+    assert len(store.iter_index()) == 1
+
+
 def test_a_resumed_duel_keeps_the_kings_forfeit(duel_spec, store, tmp_path):
     crowned(store, duel_spec, GONE_REF)
     (tmp_path / "gone").mkdir()
