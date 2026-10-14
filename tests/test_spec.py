@@ -18,7 +18,7 @@ RUNTIME = (
 def test_the_shipped_spec_is_the_competition(spec):
     assert spec.version >= 1 and spec.level == 1
     assert len(spec.tasks) == 16 and len(set(spec.tasks)) == 16
-    assert spec.runs_per_task == 10 and spec.step_ratio == 2
+    assert spec.runs_per_task == 15 and spec.step_ratio == 2
     assert (spec.margin, spec.max_void) == (3.0, 0.2)
     assert spec.benchmark == {"repo": "robotensor/RoboTwin-Vector", "branch": "vector"}
     assert set(spec.raw) == {

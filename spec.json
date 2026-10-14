@@ -23,7 +23,7 @@
     "place_phone_stand",
     "place_shoe"
   ],
-  "runs_per_task": 10,
+  "runs_per_task": 15,
   "step_ratio": 2,
   "crown": {
     "margin": 3.0,
