@@ -16,7 +16,7 @@ RUNTIME = (
 
 
 def test_the_shipped_spec_is_the_competition(spec):
-    assert spec.version >= 1 and spec.level == 1
+    assert spec.version >= 1 and spec.level == 2
     assert len(spec.tasks) == 16 and len(set(spec.tasks)) == 16
     assert spec.runs_per_task == 15 and spec.step_ratio == 2
     assert (spec.margin, spec.max_void) == (3.0, 0.2)
