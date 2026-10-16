@@ -323,7 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="GB to keep free on the run dir's filesystem by clearing finished duels, oldest "
-        "first (default: $VECTOR_FREE_GB, else 100; 0 for never)",
+        "first (default: $VECTOR_FREE_GB, else 300; 0 for never)",
     )
     du.set_defaults(func=cmd_duel)
 
@@ -335,7 +335,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--free-gb",
         type=float,
         default=None,
-        help="GB to have free when done (default: $VECTOR_FREE_GB, else 100)",
+        help="GB to have free when done (default: $VECTOR_FREE_GB, else 300)",
     )
     rp.add_argument(
         "--dry-run", action="store_true", help="say what would be cleared, and clear nothing"

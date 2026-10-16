@@ -34,7 +34,7 @@ returns it.
 **Room.** What a duel keeps there is gigabytes - the submissions it fetched, every prompt, each
 unit's logs and clips - and nothing else takes it away, so the orchestrator keeps a `storage.Reaper`
 beside its duels (from the first `run`): every ten minutes, and whenever a duel ends, while the run
-root's filesystem has less than `free_gb` GB free (`$VECTOR_FREE_GB`; 100 unless set, 0 for
+root's filesystem has less than `free_gb` GB free (`$VECTOR_FREE_GB`; 300 unless set, 0 for
 never), it clears the oldest finished duel: its directories go, its files stay, so it still reads
 as decided. The duel running, and a duel that may resume, are never touched; nor is the store.
 

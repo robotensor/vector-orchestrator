@@ -110,13 +110,13 @@ def test_reaping_leaves_the_duel_running_alone_and_a_dry_run_clears_nothing(
 
 def test_the_threshold_comes_from_the_environment(monkeypatch):
     monkeypatch.delenv(storage.FREE_ENV, raising=False)
-    assert storage.free_gb_from_env() == storage.DEFAULT_FREE_GB == 100.0
+    assert storage.free_gb_from_env() == storage.DEFAULT_FREE_GB == 300.0
     monkeypatch.setenv(storage.FREE_ENV, "250")
     assert storage.free_gb_from_env() == 250.0
     monkeypatch.setenv(storage.FREE_ENV, "0")
     assert storage.free_gb_from_env() == 0.0, "never"
     monkeypatch.setenv(storage.FREE_ENV, "lots")
-    assert storage.free_gb_from_env() == 100.0, "not a number: the default"
+    assert storage.free_gb_from_env() == 300.0, "not a number: the default"
 
 
 def test_the_free_space_is_read_where_the_run_root_will_be(tmp_path):

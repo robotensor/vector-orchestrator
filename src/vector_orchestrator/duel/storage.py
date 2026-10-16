@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 
 GB = 1024**3
 #: GB to keep free on the run root's filesystem, unless `$VECTOR_FREE_GB` says.
-DEFAULT_FREE_GB = 100.0
+DEFAULT_FREE_GB = 300.0
 FREE_ENV = "VECTOR_FREE_GB"
 #: How often the reaper reads the free space, besides when a duel ends.
 POLL_S = 600.0
