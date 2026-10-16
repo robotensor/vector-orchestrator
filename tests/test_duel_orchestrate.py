@@ -723,3 +723,44 @@ def test_a_duel_runs_on_every_card_it_is_given(workers, duel_spec, store, tmp_pa
     assert not list(run_dir.glob("slots/*/pids.json")) or all(
         json.loads(p.read_text()) == [] for p in run_dir.glob("slots/*/pids.json")
     ), "a kept server outlived its duel"
+
+
+def test_a_finished_duel_s_runs_are_cleared_once_room_is_short(
+    duel_spec, store, tmp_path, monkeypatch
+):
+    from vector_orchestrator.duel import storage
+
+    duel = orchestrator(duel_spec, store, tmp_path, free_gb=0)  # no thread: passes by hand
+    first = duel.run(DuelRequest(ZERO_REF, None, block=1))
+    second = duel.run(DuelRequest(REPLAY_REF, ZERO_REF, block=2))
+    assert duel.keep_room() is None and duel.reap_storage(free_gb=1) == [], "room enough"
+    monkeypatch.setattr(storage, "free_bytes", lambda path: 0)
+    cleared = duel.reap_storage(free_gb=1)
+    assert [f.path for f, _ in cleared] == [first.run_dir, second.run_dir], "oldest first"
+    assert all(held > 0 for _, held in cleared)
+    assert not any(p.is_dir() for p in first.run_dir.iterdir())
+    assert (first.run_dir / OUTCOME_FILE).is_file() and (first.run_dir / "request.json").is_file()
+    again = duel.run(DuelRequest(ZERO_REF, None, block=1))
+    assert again.event_id == first.event_id and again.published, "still decided, not run again"
+    assert duel.reap_storage(free_gb=1) == [], "nothing finished is left"
+    verified(store, duel_spec)
+
+
+def test_the_orchestrator_keeps_room_beside_its_duels(duel_spec, store, tmp_path, monkeypatch):
+    import time
+
+    from vector_orchestrator.duel import storage
+
+    monkeypatch.setattr(storage, "free_bytes", lambda path: 0)
+    duel = orchestrator(duel_spec, store, tmp_path, free_gb=1)
+    result = duel.run(DuelRequest(ZERO_REF, None, block=1))
+    try:
+        assert duel._reaper is not None, "started with the first duel"
+        deadline = time.monotonic() + 10
+        while not (result.run_dir / storage.CLEARED_FILE).exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert (result.run_dir / storage.CLEARED_FILE).exists(), "cleared once the duel ended"
+        assert (result.run_dir / OUTCOME_FILE).is_file()
+    finally:
+        duel._reaper.stop()
+    verified(store, duel_spec)

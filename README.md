@@ -60,6 +60,14 @@ is struck off by `Orchestrator.retire`: a `retire` event, which leaves the crown
 **Hardware.** The engine uses every visible GPU, with `--workers` units per card. Interrupted duels
 resume from `runs/<event id>/`.
 
+**Room.** A duel's run directory holds the submissions it fetched, every prompt, and each unit's
+logs and clips: gigabytes a duel. The orchestrator keeps `VECTOR_FREE_GB` (100 unless set; 0 for
+never) free on that filesystem: every ten minutes, and whenever a duel ends, while less is free it
+clears the oldest finished duel - its directories go, its files (`request.json`, `outcome.json`)
+stay, so it still reads as decided and is not run again. The duel running, and a duel that may
+resume, are never touched; nor is the store, which is the record. One pass by hand:
+`vector-orchestrator reap --run-dir runs/ [--free-gb N] [--dry-run]`.
+
 ## Usage
 
 ```bash
