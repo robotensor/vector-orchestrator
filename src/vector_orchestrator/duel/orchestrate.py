@@ -20,6 +20,7 @@ deal them again. Its event id adds the block. Everything the duel keeps on this 
     forfeit.json                  why the king forfeits, when it does
     outcome.json                  what was decided: published (with the record), refused or void
     failed.txt                    why the last attempt stopped, for a duel that did not finish
+    cleared.json                  when the duel's directories were cleared to make room (`storage`)
 
 **Resuming.** Every stage is resumable from that directory (an interrupt ends what the slots were
 running and records none of it): prompts are re-used after their hash
@@ -29,6 +30,13 @@ run once per side and at most one record. One found there is not run again: its 
 from the index (a kill between the index line and the head's rewrite leaves the old king in it)
 and its files are pushed to the mirror again. Once `outcome.json` exists, running the duel again
 returns it.
+
+**Room.** What a duel keeps there is gigabytes - the submissions it fetched, every prompt, each
+unit's logs and clips - and nothing else takes it away, so the orchestrator keeps a `storage.Reaper`
+beside its duels (from the first `run`): every ten minutes, and whenever a duel ends, while the run
+root's filesystem has less than `free_gb` GB free (`$VECTOR_FREE_GB`; 300 unless set, 0 for
+never), it clears the oldest finished duel: its directories go, its files stay, so it still reads
+as decided. The duel running, and a duel that may resume, are never touched; nor is the store.
 
 **What stops a duel, and what that means.**
 
@@ -90,7 +98,7 @@ from ..store.mirror import PushRefused
 from ..store.records import index_record, media_shas, now_iso, unit_row
 from ..store.writer import Store, atomic_write_json, read_json
 from ..units import deal
-from . import score
+from . import score, storage
 from .materialize import Materialized, Prompt, materialize_units
 from .orphans import move_aside, reap_run_root
 from .runtime import PreparedSubmission, RuntimeUnavailable, SubmissionRefused
@@ -314,6 +322,7 @@ class Orchestrator:
         benchmark: Any | None = None,
         workers: int = 1,
         cards: list[str | None] | None = None,
+        free_gb: float | None = None,
     ) -> None:
         self.spec = spec
         self.store = store
@@ -333,6 +342,12 @@ class Orchestrator:
         self.progress = progress or ProgressBoard(store, push=self.push_touched)
         #: The RoboTwin-Vector checkout (`robotwin.RoboTwin`), found on first use; a test's fake.
         self._benchmark = benchmark
+        #: GB kept free on the run root's filesystem by clearing finished duels (`storage`):
+        #: `$VECTOR_FREE_GB` unless named; 0 for never.
+        self.free_gb = storage.free_gb_from_env() if free_gb is None else max(0.0, float(free_gb))
+        self._reaper: storage.Reaper | None = None
+        #: The run directory of the duel being run, which the reaper leaves alone.
+        self._running_dir: Path | None = None
 
     @property
     def benchmark(self) -> Any:
@@ -355,6 +370,32 @@ class Orchestrator:
         if reaped:
             log.warning("reaped what a killed orchestrator left running: %s", ", ".join(reaped))
         return reaped
+
+    def keep_room(self) -> storage.Reaper | None:
+        """The thread that keeps `free_gb` GB free on the run root (`storage.Reaper`), started on
+        the first call; None when `free_gb` is 0."""
+        if self.free_gb <= 0:
+            return None
+        if self._reaper is None:
+            self._reaper = storage.Reaper(self.run_root, self.free_gb, keep=self._kept_dirs)
+            self._reaper.start()
+        return self._reaper
+
+    def _kept_dirs(self) -> list[Path]:
+        return [self._running_dir] if self._running_dir is not None else []
+
+    def reap_storage(
+        self, free_gb: float | None = None, *, dry_run: bool = False
+    ) -> list[tuple[storage.Finished, int]]:
+        """One pass now: finished duels cleared, oldest first, until `free_gb` GB (this
+        orchestrator's unless named) are free on the run root (`storage.reap`), but for the duel
+        running."""
+        return storage.reap(
+            self.run_root,
+            self.free_gb if free_gb is None else free_gb,
+            keep=self._kept_dirs(),
+            dry_run=dry_run,
+        )
 
     def run_dir(self, req: DuelRequest) -> Path:
         return self.run_root / req.event_id(self.spec)[:16]
@@ -540,6 +581,8 @@ class Orchestrator:
             started_at=str(request["started_at"]),
             deadline=time.monotonic() + self.spec.budgets["duel"] - spent,
         )
+        self._running_dir = run_dir
+        self.keep_room()
         try:
             result = self._run(duel)
         except CrownMoved:
@@ -551,6 +594,11 @@ class Orchestrator:
             log.exception("duel %s crashed", duel.event_id[:16])
             self._failed(duel, f"{type(exc).__name__}: {exc}")
             raise DuelFailed(f"{type(exc).__name__}: {exc}") from exc
+        finally:
+            # However it ended, room is checked now: what this duel kept may be the last straw.
+            self._running_dir = None
+            if self._reaper is not None:
+                self._reaper.poke()
         (run_dir / FAILED_FILE).unlink(missing_ok=True)
         return result
 

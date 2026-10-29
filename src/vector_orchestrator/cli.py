@@ -92,7 +92,10 @@ def _orchestrator(args: argparse.Namespace, spec):
         from .store.mirror import Mirror
 
         mirror = Mirror(store.root, args.mirror, token=os.environ.get("HF_TOKEN"))
-    return Orchestrator(spec, store, runtime, args.run_dir, mirror=mirror, workers=args.workers)
+    return Orchestrator(
+        spec, store, runtime, args.run_dir, mirror=mirror, workers=args.workers,
+        free_gb=args.free_gb,
+    )  # fmt: skip
 
 
 def _pairs(pairs: list[str] | None, flag: str) -> dict[str, str]:
@@ -229,6 +232,28 @@ def _duel(args: argparse.Namespace) -> int:
     return 0 if result.published else 1
 
 
+def cmd_reap(args: argparse.Namespace) -> int:
+    """One pass of what the orchestrator does beside its duels: finished duels under the run dir
+    cleared, oldest first, until the free space asked for is there."""
+    from .duel import storage
+
+    _logging()
+    free_gb = storage.free_gb_from_env() if args.free_gb is None else max(0.0, args.free_gb)
+    before = storage.free_bytes(args.run_dir)
+    cleared = storage.reap(args.run_dir, free_gb, dry_run=args.dry_run)
+    verb = "would clear" if args.dry_run else "cleared"
+    for duel, held in cleared:
+        print(f"{verb} {duel.path.name} ({duel.how}): {held / storage.GB:.2f} GB")
+    after = (
+        before + sum(h for _, h in cleared) if args.dry_run else storage.free_bytes(args.run_dir)
+    )
+    print(
+        f"{before / storage.GB:.1f} GB free before, {after / storage.GB:.1f} GB after; "
+        f"keeping {free_gb:g} GB free"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vector-orchestrator", description=__doc__.splitlines()[0]
@@ -293,7 +318,29 @@ def build_parser() -> argparse.ArgumentParser:
     du.add_argument(
         "--mirror", default=None, metavar="REPO", help="push what is published to this dataset"
     )
+    du.add_argument(
+        "--free-gb",
+        type=float,
+        default=None,
+        help="GB to keep free on the run dir's filesystem by clearing finished duels, oldest "
+        "first (default: $VECTOR_FREE_GB, else 300; 0 for never)",
+    )
     du.set_defaults(func=cmd_duel)
+
+    rp = sub.add_parser(
+        "reap", help="clear what finished duels left under the run dir, oldest first, for room"
+    )
+    rp.add_argument("--run-dir", required=True, help="where duels keep prompts and logs")
+    rp.add_argument(
+        "--free-gb",
+        type=float,
+        default=None,
+        help="GB to have free when done (default: $VECTOR_FREE_GB, else 300)",
+    )
+    rp.add_argument(
+        "--dry-run", action="store_true", help="say what would be cleared, and clear nothing"
+    )
+    rp.set_defaults(func=cmd_reap)
     return parser
 
 

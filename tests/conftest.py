@@ -66,3 +66,10 @@ def fake_module(monkeypatch):
 @pytest.fixture
 def fake_benchmark(fake_module):
     return fake_module.FakeBenchmark()
+
+
+@pytest.fixture(autouse=True)
+def _no_reaping(monkeypatch):
+    """No duel's runs are cleared for room on this host's disk under a test (`duel.storage`):
+    a test that wants reaping names `free_gb` itself."""
+    monkeypatch.setenv("VECTOR_FREE_GB", "0")
