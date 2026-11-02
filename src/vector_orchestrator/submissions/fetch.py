@@ -166,6 +166,8 @@ class HubFetcher:
         return self.cache.store(resolved, lambda into: self._snapshot(resolved, into))
 
     def _snapshot(self, resolved: Resolved, into: Path) -> None:
+        from huggingface_hub.errors import GatedRepoError
+
         download = self._download
         if download is None:
             from huggingface_hub import snapshot_download
@@ -177,6 +179,13 @@ class HubFetcher:
             download(resolved.repo, revision=resolved.sha, repo_type=REPO_TYPE, local_dir=str(into))
         except SubmissionRejected:
             raise
+        except GatedRepoError:
+            # A gated repository shows its metadata to anyone, so `resolve` passes it every time;
+            # only the download says this token was not let in. The entry's doing: retrying would
+            # hold the queue up behind it.
+            raise SubmissionRejected(
+                "fetch", f"{resolved.repo}@{resolved.sha} is gated and this token was not let in"
+            ) from None
         except Exception as exc:  # noqa: BLE001 - whatever the transport raised: not the entry's
             raise SubmissionError(
                 f"downloading {resolved.repo}@{resolved.sha} failed: {type(exc).__name__}: {exc}"

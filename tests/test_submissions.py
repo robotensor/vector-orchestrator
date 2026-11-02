@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from huggingface_hub.errors import HfHubHTTPError
+from huggingface_hub.errors import GatedRepoError, HfHubHTTPError
 
 from submission_helpers import SHA_A, SHA_B, FakeHub, httpx, hub_response, write_policy_repo
 from vector_orchestrator.duel.weights_runtime import MAX_REPO_BYTES
@@ -189,6 +189,19 @@ def test_fetch_refuses_a_repository_over_max_repo_bytes_before_and_after_downloa
     assert not (tmp_path / "lying" / SHA_B / "repo").exists()
     assert not (tmp_path / "lying" / SHA_B / "partial").exists()
     assert not (tmp_path / "lying" / SHA_B / "fetched.json").exists()
+
+
+def test_a_gated_repository_this_token_is_not_let_into_is_rejected_not_retried(spec, tmp_path, hub):
+    """`resolve` passes a gated repository, whose metadata anyone may read; only the download
+    says no. As the harness's problem it would stay queued and be tried again every step."""
+
+    def gated(repo_id, **kwargs):
+        raise GatedRepoError("403 gated", response=hub_response(403))
+
+    fetcher = HubFetcher(RepoCache(tmp_path / "cache", MAX_REPO_BYTES), api=hub, download=gated)
+    with pytest.raises(SubmissionRejected, match="org/policy@a+ is gated"):
+        fetcher.fetch(fetcher.resolve("org/policy", "main"))
+    assert fetcher.cache.lookup(fetcher.resolve("org/policy", "main")) is None
 
 
 def test_a_download_that_fails_is_the_harness_problem_and_leaves_nothing_behind(
