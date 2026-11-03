@@ -141,6 +141,22 @@ def test_a_repository_without_its_weights_file_is_refused(tmp_path, vector_spec)
         rt.fetch(SubmissionRef.make("m/r", SHA), workdir=tmp_path / "w")
 
 
+def test_a_commit_the_cache_holds_is_served_without_asking_the_hub(tmp_path, vector_spec):
+    """A king is fetched from its own duel's checkout, whatever became of its repository since."""
+    downloads: list[str] = []
+    rt = runtime(tmp_path, vector_spec, {"model.safetensors": 7}, downloads=downloads)
+    ref = SubmissionRef.make("m/r", SHA)
+    first = rt.fetch(ref, workdir=tmp_path / "w1")
+    assert downloads == ["m/r"]
+
+    def gone(*a, **k):
+        raise AssertionError("the Hub was asked")
+
+    rt.fetcher.api = SimpleNamespace(repo_info=gone)
+    again = rt.fetch(ref, workdir=tmp_path / "w2")
+    assert again.root == first.root and downloads == ["m/r"]
+
+
 def test_only_the_weights_file_is_fetched_and_the_manifest_is_the_validators(tmp_path, vector_spec):
     downloads: list[str] = []
     rt = runtime(

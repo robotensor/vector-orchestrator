@@ -6,7 +6,9 @@ the validator's own (`vector_runtime.policy:VectorPolicy`, in the policy environ
 
 - `resolve` pins `repo@revision` to a commit on the Hub, which also lists the repository's files.
 - `fetch` refuses a repository holding anything else or no weights file, and downloads the weights
-  file alone into a cache addressed by the commit.
+  file alone into a cache addressed by the commit. A commit the cache already holds is served from
+  it without asking the Hub: a sha names one tree, and what became of the repository since (gated,
+  private, deleted) changes nothing about the weights a king was crowned with.
 - `prepare` checks the file (`vector_runtime.check`), writes a manifest naming the policy class with
   the weights' absolute path, and has the policy answer `hello`, which loads the weights: a file
   that passes the header check but does not load is refused before a unit is played.
@@ -102,6 +104,9 @@ class WeightsPolicyRuntime(SubprocessPolicyRuntime):
             return self.fetcher.resolve(repo, revision).ref
 
     def fetch(self, ref: SubmissionRef, *, workdir: Path) -> FetchedSubmission:
+        kept = self.cache.lookup(Resolved(repo=ref.repo, revision=ref.revision, sha=ref.revision))
+        if kept is not None:
+            return FetchedSubmission(ref=ref, commit=ref.revision, root=kept.root)
         with _mapped():
             resolved = self.fetcher.resolve(ref.repo, ref.revision)
             names = sorted(f.path for f in resolved.files)
