@@ -356,6 +356,9 @@ def restore(store: Store, mirror: Mirror, extra: Iterable[str] = ()) -> bool:
             manifest = mirror.read("manifest.json")
             if manifest is None:
                 raise StoreDiverged(f"{mirror.repo} has an index but no manifest.json")
+            # Read before a byte is written: an index taken up without the caller's files that go
+            # with it could not be told from a whole one.
+            kept = {name: mirror.read(name) for name in extra}
             atomic_write_text(store.root / "manifest.json", manifest.decode("utf-8"))
             for part, data in parts.items():
                 atomic_write_text(store.index_part_path(part), data.decode("utf-8"))
@@ -365,9 +368,13 @@ def restore(store: Store, mirror: Mirror, extra: Iterable[str] = ()) -> bool:
             atomic_write_json(store.head_path(), head_at(store.root, seq))
             log.info("restored %s from %s: %d records (was %d)", store.root, mirror.repo, seq, ours)
             taken = True
+            for name, data in kept.items():
+                if data is not None:
+                    atomic_write_text(store.root / name, data.decode("utf-8"))
+            return True
         for name in extra:
             path = store.root / name
-            if taken or not path.is_file():
+            if not path.is_file():
                 data = mirror.read(name)
                 if data is not None:
                     atomic_write_text(path, data.decode("utf-8"))

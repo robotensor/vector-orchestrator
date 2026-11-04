@@ -256,6 +256,24 @@ def test_a_missing_file_of_its_own_is_taken_even_when_the_index_is_level(publish
     assert (published.root / "validator" / "vector.json").is_file()
 
 
+def test_the_callers_file_is_read_before_anything_is_written(spec, tmp_path, published, api):
+    """One failed read of the lane's state must not leave an index taken up without it."""
+    api.files = mirrored(published)
+    m = mirror.Mirror(tmp_path / "fresh", "org/store")
+    plain = m.read
+
+    def read(path):
+        if path == "validator/vector.json":
+            raise mirror.MirrorUnreachable("503")
+        return plain(path)
+
+    m.read = read
+    fresh = Store(tmp_path / "fresh", spec)
+    with pytest.raises(mirror.MirrorUnreachable):
+        mirror.restore(fresh, m, extra=["validator/vector.json"])
+    assert fresh.manifest() is None and fresh.last_record() is None
+
+
 def test_a_mirror_that_cannot_be_read_restores_nothing(spec, tmp_path, api):
     api.fail = OSError("no route to host")
     fresh = Store(tmp_path / "fresh", spec)
