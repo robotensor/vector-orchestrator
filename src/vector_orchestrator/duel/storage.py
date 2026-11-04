@@ -1,9 +1,8 @@
 """Room on the run root, kept: what finished duels left behind is cleared, oldest first, once
 less than `free_gb` GB is free on its filesystem.
 
-A duel keeps everything it ran under `<run_root>/<event_id[:16]>/` (`orchestrate`): the
-submissions it fetched, every prompt, each unit's run logs and clips - gigabytes a duel - and
-nothing took them away. So an orchestrator keeps a `Reaper` beside its duels: every `POLL_S`
+A duel keeps everything it ran under `<run_root>/<event_id[:16]>/` (`orchestrate`): every prompt,
+each unit's run logs and clips - gigabytes a duel - and nothing took them away. So an orchestrator keeps a `Reaper` beside its duels: every `POLL_S`
 seconds, and whenever a duel ends, it reads the free space on the run root's filesystem and, while
 that is under the threshold, clears the oldest finished duel, then the next.
 
@@ -18,6 +17,11 @@ that is under the threshold, clears the oldest finished duel, then the next.
 The threshold is `$VECTOR_FREE_GB` (`DEFAULT_FREE_GB` unless set; 0 for never), in GB of 1024^3
 bytes. The store - the published events and their clips - is the record, mirrored, and is not
 touched. `vector-orchestrator reap` does one pass by hand.
+
+**The fetch cache** (`submissions.fetch.RepoCache`) sits apart from the run root and holds every
+fetched submission's weights, so the same thread holds it to `$VECTOR_CACHE_GB` (`DEFAULT_CACHE_GB`
+unless set; 0 for no limit), removing the oldest fetches over it, but for the two the running duel
+uses. A later duel of a king removed here brings it back from where the caller keeps it.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ import threading
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ..store.records import now_iso
 from ..store.writer import atomic_write_json
@@ -40,6 +45,9 @@ GB = 1024**3
 #: GB to keep free on the run root's filesystem, unless `$VECTOR_FREE_GB` says.
 DEFAULT_FREE_GB = 300.0
 FREE_ENV = "VECTOR_FREE_GB"
+#: GB the fetch cache may hold, unless `$VECTOR_CACHE_GB` says.
+DEFAULT_CACHE_GB = 200.0
+CACHE_ENV = "VECTOR_CACHE_GB"
 #: How often the reaper reads the free space, besides when a duel ends.
 POLL_S = 600.0
 OUTCOME_FILE = "outcome.json"
@@ -49,19 +57,26 @@ _RUN_DIR = re.compile(r"[0-9a-f]{16}")
 _ASIDE = re.compile(r"[0-9a-f]{16}\.[a-z-]+-\d+")
 
 
-def free_gb_from_env() -> float:
-    """`$VECTOR_FREE_GB`, else `DEFAULT_FREE_GB`. A value that is not a number is the default,
-    logged."""
-    raw = os.environ.get(FREE_ENV)
+def _gb_from_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
     if raw is None or not raw.strip():
-        return DEFAULT_FREE_GB
+        return default
     try:
         return max(0.0, float(raw))
     except ValueError:
-        log.warning(
-            "%s=%r is not a number of GB; %s GB are kept free", FREE_ENV, raw, DEFAULT_FREE_GB
-        )
-        return DEFAULT_FREE_GB
+        log.warning("%s=%r is not a number of GB; %s it is", name, raw, default)
+        return default
+
+
+def free_gb_from_env() -> float:
+    """`$VECTOR_FREE_GB`, else `DEFAULT_FREE_GB`. A value that is not a number is the default,
+    logged."""
+    return _gb_from_env(FREE_ENV, DEFAULT_FREE_GB)
+
+
+def cache_gb_from_env() -> float:
+    """`$VECTOR_CACHE_GB`, else `DEFAULT_CACHE_GB`, as `free_gb_from_env` reads its own."""
+    return _gb_from_env(CACHE_ENV, DEFAULT_CACHE_GB)
 
 
 def free_bytes(path: str | os.PathLike[str]) -> int:
@@ -189,7 +204,8 @@ def reap(
 
 class Reaper:
     """A thread that keeps `free_gb` GB free on `run_root`: `reap` every `poll_s` seconds and
-    whenever poked (a duel ended), but for the directories `keep()` names (the duel running).
+    whenever poked (a duel ended), but for the directories `keep()` names (the duel running); and
+    `cache`, when there is one, to `cache_gb` GB, but for the commits `cache_keep()` names.
     What goes wrong is logged, never raised: a duel is not stopped by its housekeeping."""
 
     def __init__(
@@ -199,7 +215,13 @@ class Reaper:
         *,
         keep: Callable[[], Collection[str | os.PathLike[str]]] = tuple,
         poll_s: float = POLL_S,
+        cache: Any = None,
+        cache_gb: float = 0.0,
+        cache_keep: Callable[[], Collection[str]] = tuple,
     ) -> None:
+        self.cache = cache
+        self.cache_gb = float(cache_gb)
+        self._cache_keep = cache_keep
         self.run_root = Path(run_root)
         self.free_gb = float(free_gb)
         self.poll_s = float(poll_s)
@@ -222,6 +244,13 @@ class Reaper:
             self._thread.join(timeout)
 
     def once(self) -> list[tuple[Finished, int]]:
+        if self.cache is not None and self.cache_gb > 0:
+            try:
+                removed = self.cache.trim(int(self.cache_gb * GB), keep=self._cache_keep())
+                if removed:
+                    log.info("removed %d old fetches from the cache: %s", len(removed), removed)
+            except Exception:  # noqa: BLE001 - the next pass tries again
+                log.exception("could not trim the fetch cache")
         try:
             return reap(self.run_root, self.free_gb, keep=self._keep())
         except Exception:  # noqa: BLE001 - the next pass tries again

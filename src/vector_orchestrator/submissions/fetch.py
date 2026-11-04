@@ -20,11 +20,12 @@ import json
 import os
 import shutil
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..ids import is_commit_sha
 from ..store.records import now_iso
 from ..store.writer import atomic_write_json
 from .errors import SubmissionError, SubmissionRejected
@@ -92,6 +93,44 @@ class RepoCache:
             if cached is not None:
                 return cached
             return self._fill(resolved, entry, fill)
+        finally:
+            os.close(fd)
+
+    def trim(self, max_bytes: int, *, keep: Collection[str] = ()) -> list[str]:
+        """The oldest fetches removed until the cache holds at most `max_bytes`, but for the commits
+        in `keep`; the commits removed. An entry being filled holds its lock and is passed over.
+        Only what this cache wrote goes: a folder named by a commit, holding nothing else."""
+        if max_bytes <= 0 or not self.root.is_absolute() or not self.root.is_dir():
+            return []
+        entries, total = [], 0
+        for child in sorted(self.root.iterdir()):
+            if child.is_symlink() or not child.is_dir() or not is_commit_sha(child.name):
+                continue
+            size = measure(child)[0]
+            total += size
+            if {p.name for p in child.iterdir()} - {REPO_DIR, PARTIAL_DIR, FETCHED_FILE}:
+                continue
+            marker = child / FETCHED_FILE
+            entries.append(((marker if marker.exists() else child).stat().st_mtime, child, size))
+        removed = []
+        for _, child, size in sorted(entries, key=lambda e: e[:2]):
+            if total <= max_bytes:
+                break
+            if child.name not in keep and self._remove(child):
+                total -= size
+                removed.append(child.name)
+        return removed
+
+    def _remove(self, entry: Path) -> bool:
+        fd = os.open(self.root / f"{entry.name}.lock", os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return False  # being filled now
+            (entry / FETCHED_FILE).unlink(missing_ok=True)  # first: a half-removed one is no entry
+            shutil.rmtree(entry)
+            return True
         finally:
             os.close(fd)
 

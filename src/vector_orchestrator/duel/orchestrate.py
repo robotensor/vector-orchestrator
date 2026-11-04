@@ -349,6 +349,10 @@ class Orchestrator:
         #: GB kept free on the run root's filesystem by clearing finished duels (`storage`):
         #: `$VECTOR_FREE_GB` unless named; 0 for never.
         self.free_gb = storage.free_gb_from_env() if free_gb is None else max(0.0, float(free_gb))
+        #: GB the runtime's fetch cache may hold, if it has one: `$VECTOR_CACHE_GB`; 0 for no limit.
+        self.cache_gb = storage.cache_gb_from_env()
+        #: The commits the running duel uses, which the cache keeps.
+        self._running_commits: frozenset[str] = frozenset()
         self._reaper: storage.Reaper | None = None
         #: The run directory of the duel being run, which the reaper leaves alone.
         self._running_dir: Path | None = None
@@ -376,12 +380,20 @@ class Orchestrator:
         return reaped
 
     def keep_room(self) -> storage.Reaper | None:
-        """The thread that keeps `free_gb` GB free on the run root (`storage.Reaper`), started on
-        the first call; None when `free_gb` is 0."""
-        if self.free_gb <= 0:
+        """The thread that keeps `free_gb` GB free on the run root and the fetch cache to `cache_gb`
+        (`storage.Reaper`), started on the first call; None when there is nothing to hold."""
+        cache = getattr(self.runtime, "cache", None) if self.cache_gb > 0 else None
+        if self.free_gb <= 0 and cache is None:
             return None
         if self._reaper is None:
-            self._reaper = storage.Reaper(self.run_root, self.free_gb, keep=self._kept_dirs)
+            self._reaper = storage.Reaper(
+                self.run_root,
+                self.free_gb,
+                keep=self._kept_dirs,
+                cache=cache,
+                cache_gb=self.cache_gb,
+                cache_keep=lambda: self._running_commits,
+            )
             self._reaper.start()
         return self._reaper
 
@@ -586,6 +598,9 @@ class Orchestrator:
             deadline=time.monotonic() + self.spec.budgets["duel"] - spent,
         )
         self._running_dir = run_dir
+        self._running_commits = frozenset(
+            ref.revision for ref in (req.challenger, req.king) if ref is not None
+        )
         self.keep_room()
         try:
             result = self._run(duel)
@@ -601,6 +616,7 @@ class Orchestrator:
         finally:
             # However it ended, room is checked now: what this duel kept may be the last straw.
             self._running_dir = None
+            self._running_commits = frozenset()
             if self._reaper is not None:
                 self._reaper.poke()
         (run_dir / FAILED_FILE).unlink(missing_ok=True)

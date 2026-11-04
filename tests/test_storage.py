@@ -154,3 +154,89 @@ def test_reap_by_hand(tmp_path, kb_is_gb, free, capsys):
     out = capsys.readouterr().out
     assert f"cleared {a.name} (decided): 4.00 GB" in out and "keeping 12 GB free" in out
     assert not (a / "king").exists()
+
+
+def _fetched(cache, sha, kb, when):
+    """A complete fetch of `kb` KB in `cache`, made at time `when`."""
+    from vector_orchestrator.submissions.resolve import Resolved
+
+    cache.store(
+        Resolved(repo="m/r", revision=sha, sha=sha),
+        lambda into: (into / "model.safetensors").write_bytes(b"w" * kb * 1024),
+    )
+    os.utime(cache.root / sha / "fetched.json", (when, when))
+
+
+def _cache(tmp_path):
+    from vector_orchestrator.submissions.fetch import RepoCache
+
+    cache = RepoCache(tmp_path / "cache", 1 << 40)
+    for n, sha in enumerate("abcd"):
+        _fetched(cache, sha * 40, 10, 1000 + n)
+    return cache
+
+
+def test_the_cache_is_held_to_its_limit_by_removing_the_oldest_and_no_more(tmp_path):
+    from vector_orchestrator.submissions.resolve import Resolved
+
+    cache = _cache(tmp_path)
+    assert cache.trim(25 * 1024) == ["a" * 40, "b" * 40]
+    assert not (cache.root / ("a" * 40)).exists()
+    assert cache.lookup(Resolved("m/r", "a" * 40, "a" * 40)) is None
+    assert cache.lookup(Resolved("m/r", "c" * 40, "c" * 40)) is not None
+    assert cache.trim(25 * 1024) == [], "under the limit: nothing"
+
+
+def test_trimming_passes_over_what_the_running_duel_uses(tmp_path):
+    cache = _cache(tmp_path)
+    assert cache.trim(25 * 1024, keep={"a" * 40}) == ["b" * 40, "c" * 40]
+    assert (cache.root / ("a" * 40) / "repo").is_dir()
+
+
+def test_trimming_passes_over_an_entry_being_filled(tmp_path):
+    import fcntl
+
+    cache = _cache(tmp_path)
+    fd = os.open(cache.root / f"{'a' * 40}.lock", os.O_RDWR | os.O_CREAT)
+    # A second open file description: flock contends with it even in this process.
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        assert cache.trim(25 * 1024) == ["b" * 40, "c" * 40]
+    finally:
+        os.close(fd)
+
+
+def test_trimming_touches_nothing_this_cache_did_not_write(tmp_path):
+    from vector_orchestrator.submissions.fetch import RepoCache
+
+    cache = _cache(tmp_path)
+    (cache.root / "notes").mkdir()
+    (cache.root / "notes" / "keep.txt").write_text("x")
+    foreign = cache.root / ("e" * 40)
+    foreign.mkdir()
+    (foreign / "something.py").write_text("x")
+    os.utime(foreign, (1, 1))
+    assert cache.trim(1) == ["a" * 40, "b" * 40, "c" * 40, "d" * 40]
+    assert (cache.root / "notes" / "keep.txt").is_file() and (foreign / "something.py").is_file()
+    assert RepoCache("relative/cache", 1).trim(1) == []
+    assert cache.trim(0) == [], "0: no limit"
+
+
+def test_the_cache_limit_comes_from_the_environment(monkeypatch):
+    monkeypatch.delenv(storage.CACHE_ENV, raising=False)
+    assert storage.cache_gb_from_env() == storage.DEFAULT_CACHE_GB == 200.0
+    monkeypatch.setenv(storage.CACHE_ENV, "50")
+    assert storage.cache_gb_from_env() == 50.0
+    monkeypatch.setenv(storage.CACHE_ENV, "lots")
+    assert storage.cache_gb_from_env() == 200.0
+
+
+def test_the_reaper_trims_the_cache_even_with_the_run_root_left_alone(tmp_path):
+    cache = _cache(tmp_path)
+    reaper = Reaper(
+        tmp_path / "runs", 0, cache=cache, cache_gb=25 / 1024 / 1024, cache_keep=lambda: {"a" * 40}
+    )
+    reaper.once()
+    assert (cache.root / ("a" * 40) / "repo").is_dir()
+    assert not (cache.root / ("b" * 40)).exists() and not (cache.root / ("c" * 40)).exists()
+    assert (cache.root / ("d" * 40) / "repo").is_dir()
