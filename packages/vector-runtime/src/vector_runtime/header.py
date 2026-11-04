@@ -132,9 +132,15 @@ def parse_header(raw: bytes, file_size: int) -> Header:
         ):
             raise HeaderError(f"{METADATA_KEY} must map strings to strings")
 
-    tensors = {name: _tensor(name, entry) for name, entry in document.items()}
     data_bytes = file_size - LENGTH_BYTES - len(raw)
-    _check_layout(tensors, data_bytes)
+    try:
+        tensors = {name: _tensor(name, entry) for name, entry in document.items()}
+        _check_layout(tensors, data_bytes)
+    except HeaderError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - whatever a crafted header sets off is the file's doing
+        # Read as the harness's fault, it would stay at the head of the queue for ever.
+        raise HeaderError(f"the header cannot be read: {type(exc).__name__}") from None
     return Header(header_bytes=len(raw), tensors=tensors, metadata=metadata, data_bytes=data_bytes)
 
 
@@ -144,7 +150,7 @@ def _tensor(name: str, entry: Any) -> TensorInfo:
     if not isinstance(entry, dict) or set(entry) != {"dtype", "shape", "data_offsets"}:
         raise HeaderError(f"{name}: expected exactly dtype, shape and data_offsets")
     dtype, shape, offsets = entry["dtype"], entry["shape"], entry["data_offsets"]
-    if dtype not in DTYPE_SIZES:
+    if not isinstance(dtype, str) or dtype not in DTYPE_SIZES:
         raise HeaderError(f"{name}: unknown dtype {dtype!r}")
     if not isinstance(shape, list) or len(shape) > MAX_RANK or not all(_count(d) for d in shape):
         raise HeaderError(f"{name}: shape must be a list of at most {MAX_RANK} non-negative ints")

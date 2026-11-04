@@ -124,3 +124,23 @@ def test_a_file_shorter_than_the_length_field_is_refused():
 def test_a_header_that_is_not_an_object_start_is_refused():
     with pytest.raises(HeaderError, match="JSON object"):
         parse(safetensors_bytes({}, header=b" {}"))
+
+
+def raw_header(body: bytes) -> bytes:
+    return struct.pack("<Q", len(body)) + body
+
+
+@pytest.mark.parametrize("dtype", [[], {}, ["F32"], {"a": 1}, 1, None, True])
+def test_a_dtype_that_is_not_a_string_is_refused_not_a_crash(dtype):
+    """Unhashable, it raised TypeError: read as the harness's fault, the entry held the queue."""
+    body = json.dumps({"a": {"dtype": dtype, "shape": [], "data_offsets": [0, 0]}}).encode()
+    with pytest.raises(HeaderError, match="unknown dtype"):
+        parse(raw_header(body))
+
+
+def test_a_shape_too_large_to_print_is_refused_not_a_crash():
+    """Saying what was wrong with it raised ValueError: Python will not print such an integer."""
+    huge = b"1" + b"0" * 4000
+    body = b'{"a":{"dtype":"F32","shape":[' + huge + b"," + huge + b'],"data_offsets":[0,0]}}'
+    with pytest.raises(HeaderError, match="cannot be read"):
+        parse(raw_header(body))
