@@ -323,8 +323,12 @@ class Orchestrator:
         workers: int = 1,
         cards: list[str | None] | None = None,
         free_gb: float | None = None,
+        king_forfeits: bool = True,
     ) -> None:
         self.spec = spec
+        #: Whether a king refused here forfeits. False where the king's weights are the validator's
+        #: to keep: a refusal can then only be the host's own failure, and the duel fails instead.
+        self.king_forfeits = king_forfeits
         self.store = store
         #: Serves each side's policy (`runtime.SubprocessPolicyRuntime` or the weights runtime).
         self.runtime = runtime
@@ -621,6 +625,7 @@ class Orchestrator:
             try:
                 fetched[side] = self.runtime.fetch(ref, workdir=duel.run_dir / side)
             except SubmissionRefused as exc:
+                self._refuse_king(side, exc)
                 refused[side] = str(exc)
                 if side == "challenger":
                     break
@@ -638,6 +643,7 @@ class Orchestrator:
                     fetched[side], workdir=duel.run_dir / side / "check"
                 )
             except SubmissionRefused as exc:
+                self._refuse_king(side, exc)
                 refused[side] = str(exc)
             except RuntimeUnavailable as exc:
                 raise HarnessUnavailable(f"checking the {side}: {exc}") from exc
@@ -706,6 +712,11 @@ class Orchestrator:
         return self._publish(duel)
 
     # -- phases -----------------------------------------------------------------------------
+
+    def _refuse_king(self, side: str, exc: SubmissionRefused) -> None:
+        """`HarnessUnavailable` for a king where a king does not forfeit (`king_forfeits`)."""
+        if side == "king" and not self.king_forfeits:
+            raise HarnessUnavailable(f"the king was refused, not its doing: {exc}") from exc
 
     def _derive(self, duel: _Duel) -> None:
         """The units: a checkout that is missing or cannot run the spec's tasks stops the duel

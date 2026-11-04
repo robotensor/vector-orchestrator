@@ -21,6 +21,7 @@ from submission_helpers import write_policy_repo
 from vector_orchestrator.duel.orchestrate import (
     OUTCOME_FILE,
     CrownMoved,
+    DuelFailed,
     DuelRequest,
     HarnessUnavailable,
     Orchestrator,
@@ -578,6 +579,24 @@ def test_the_king_is_vacated_not_retired(duel_spec, store, tmp_path):
     with pytest.raises(ValueError, match="vacate it instead"):
         orchestrator(duel_spec, store, tmp_path).retire(ZERO_REF, block=2, reason="gone")
     assert len(store.iter_index()) == 1
+
+
+def test_where_a_king_does_not_forfeit_its_refusal_fails_the_duel_and_nothing_is_published(
+    duel_spec, store, tmp_path
+):
+    """A subnet that keeps its kings' weights itself: a refusal can only be the host's failure."""
+    crowned(store, duel_spec, GONE_REF)
+    (tmp_path / "gone").mkdir()
+    runtime = FakePolicyRuntime(
+        duel_spec, {REPLAY_REF.repo: REPLAY, ZERO_REF.repo: ZERO, GONE_REF.repo: tmp_path / "gone"}
+    )
+    req = DuelRequest(REPLAY_REF, GONE_REF, block=2)
+    duel = orchestrator(duel_spec, store, tmp_path, runtime)
+    duel.king_forfeits = False
+    with pytest.raises(DuelFailed, match="not its doing"):
+        duel.run(req)
+    assert store.head()["king"]["key"] == GONE_REF.key
+    assert not (duel.run_dir(req) / "forfeit.json").exists()
 
 
 def test_a_resumed_duel_keeps_the_kings_forfeit(duel_spec, store, tmp_path):
