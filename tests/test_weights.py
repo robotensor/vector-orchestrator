@@ -128,6 +128,17 @@ def runtime(tmp_path, vector_spec, files, checker=None, downloads=None):
     )
 
 
+def test_a_refusal_keeps_only_so_much_of_what_a_file_says_and_can_always_be_written():
+    """It quotes the miner's header, is copied into every unit's row, and is published."""
+    from vector_orchestrator.duel.runtime import MAX_REASON
+
+    refused = SubmissionRefused("check", "y" * 1_000_000)
+    assert len(refused.reason) < MAX_REASON + 40 and "1000000 characters" in refused.reason
+    assert len(str(refused)) < MAX_REASON + 60
+    assert SubmissionRefused("check", "bad \ud800 name").reason.encode("utf-8")
+    assert SubmissionRefused("check", "short").reason == "short"
+
+
 def test_a_repository_holding_anything_but_weights_and_a_readme_is_refused(tmp_path, vector_spec):
     rt = runtime(tmp_path, vector_spec, {"model.safetensors": 7, "policy.py": 10})
     with pytest.raises(SubmissionRefused) as refused:

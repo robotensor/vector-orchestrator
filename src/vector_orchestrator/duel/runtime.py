@@ -47,11 +47,18 @@ from ..ids import SubmissionRef, is_commit_sha
 from ..runner import benchmark_environment
 from .orphans import Ledger
 
+#: The most of a refusal's reason that is kept. It can quote what a miner's file says, and it is
+#: copied into every unit's row and published.
+MAX_REASON = 500
+
 
 class SubmissionRefused(Exception):
     """The submission cannot run, for a reason of its own; `step` says where it stopped."""
 
     def __init__(self, step: str, reason: str) -> None:
+        reason = reason.encode("utf-8", "backslashreplace").decode("utf-8")
+        if len(reason) > MAX_REASON:
+            reason = f"{reason[:MAX_REASON]}... ({len(reason)} characters)"
         self.step = step
         self.reason = reason
         super().__init__(f"{step}: {reason}")
