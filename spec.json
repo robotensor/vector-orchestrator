@@ -1,10 +1,10 @@
 {
-  "version": 3,
+  "version": 4,
   "benchmark": {
     "repo": "robotensor/RoboTwin-Vector",
     "branch": "vector"
   },
-  "level": 3,
+  "level": 4,
   "tasks": [
     "beat_block_hammer",
     "move_stapler_pad",
